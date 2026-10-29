@@ -111,6 +111,10 @@ final class Recorder {
             DispatchQueue.main.async { self.frontURL = nil }
             return
         }
+        // Keep the focused field's contents fresh for when Return sends it.
+        // Typing triggers a read too, but dictated or pasted text (Voice
+        // Type) arrives without keystrokes.
+        readTyped()
         let key = "\(app.bundleID)|\(win.windowID)|\(title ?? "")"
         let now = Date()
         let changed = key != lastKey
@@ -291,6 +295,9 @@ final class Recorder {
         guard let el = focusedElement() else { return }
         let v = el.values([kAXRoleAttribute, kAXSubroleAttribute, kAXValueAttribute])
         guard v[kAXSubroleAttribute] as? String != "AXSecureTextField", let value = v[kAXValueAttribute] as? String else { return }
+        // An emptied field (just sent) mustn't overwrite what it held a
+        // moment ago, or Return would find nothing to record.
+        if value.isEmpty, let t = typed, CFEqual(t.element, el) { return }
         typed = (el, value, Date())
     }
 
