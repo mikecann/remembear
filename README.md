@@ -1,8 +1,48 @@
-# RememBear
+# <img src="icons/remembear.png" width="24" height="24" alt=""> RememBear
 
-My own version of ChatGPT's Computer History, which I've turned off. It's a little menu bar app that keeps track of what I'm doing on my Mac, and every 10 minutes it asks Claude (on my own subscription) to write a short summary. Every 6 hours it writes a longer one covering the whole stretch. The summaries are Markdown files in the same format Codex used, so Agent Archive backs them up and my agents can search them ("what was I doing on Tuesday afternoon?").
+A computer history for your Mac that you own: it remembers what you were doing, so your AI agents can too
 
-Part of Mikerosoft, and one of its bears with BrowserBear and ComputerCub. It was called Recall It until 30 Oct 2026.
+macOS 14 or later
+
+## What it is
+
+My own version of ChatGPT's Computer History, which I've turned off. It's a little menu bar app that keeps track of what I'm doing on my Mac, and every 10 minutes it asks Claude (on my own subscription) to write a short summary. Every 6 hours it writes a longer one covering the whole stretch. The summaries are Markdown files in the same format Codex used, so [Agent Archive](https://agent-archive.mikecann.app) backs them up and my agents can search them ("what was I doing on Tuesday afternoon?").
+
+This is what one of the 10-minute summaries looks like (a made-up one, mine are a lot more boring):
+
+![A RememBear summary file: a title and description up top, then a memory summary, some context about the user, and what happened in order](docs/summary.png)
+
+It's one of the bears that plug into Threadbear, the app I run my agents in, with [BrowserBear](https://github.com/mikecann/browserbear) and [ComputerCub](https://github.com/mikecann/computercub). It was called Recall It until 30 Oct 2026.
+
+![RememBear banner](docs/header.webp)
+
+## Get it
+
+Paste this into your AI coding agent (Claude Code, Codex, Cursor...):
+
+> Fork https://github.com/mikecann/remembear to my GitHub account and clone my fork
+> (if I don't use GitHub, or want to keep my copy private, just clone it instead),
+> then make it my own. It's one of Mike Cann's personal tools, so read the README
+> first, change anything specific to his setup to suit mine, then help me get it
+> running.
+
+The main thing to change is in `Sources/RememBearCore/Prompts.swift`: the summary prompt is written about me, by name.
+
+### Or set it up by hand
+
+You'll need macOS 14 or later, Xcode or the Command Line Tools with Swift 6 or later, and [Claude Code](https://claude.com/claude-code) signed in, as that's what writes the summaries. Screen search also wants [uv](https://docs.astral.sh/uv/); without it everything else still works.
+
+```bash
+git clone https://github.com/mikecann/remembear.git
+cd remembear
+bash restart.sh
+```
+
+That builds and opens `~/Applications/RememBear.app`, and the first time a setup window walks you through the permissions it needs:
+
+![RememBear's setup window with Screen Recording, Accessibility and Control Chrome all turned on](docs/setup.png)
+
+Each row starts red, has a button that opens the right part of System Settings, and goes green once it's on. It's under Permissions… in the menu later, or open RememBear.app again.
 
 ## What it records
 
@@ -32,7 +72,8 @@ remembear search "the convex usage chart" [--limit 10] [--days 7] [--json]
 ## What it never records
 
 - **Private browser windows.** The window list only has a page's title, and an incognito window's title doesn't say it's incognito, so RememBear asks Chrome (and other Chromium browsers) over AppleScript whether the front window is normal or incognito, and records nothing unless it's normal. Safari and Firefox can't say, so nothing from them is recorded at all.
-- **Password managers** (1Password, Passwords, Keychain Access, Bitwarden, KeePassXC, Proton Pass and friends), macOS's own password and Touch ID prompts, and the lock screen.
+- **Password managers** (1Password, Passwords, Keychain Access, Bitwarden, KeePassXC, Proton Pass and friends) and their web vaults (1password.com, Bitwarden, LastPass, Dashlane, Proton Pass), macOS's own password and Touch ID prompts, and the lock screen.
+- **Terminals** (Terminal, iTerm2, Ghostty, Warp, WezTerm, Alacritty, kitty, Hyper, Tabby). They show env dumps and keys in all sorts of shapes, and masking can't be sure it's caught them all.
 - **Secrets on screen.** A screenshot sees everything, so the text is masked before it's written: every environment variable's value (`FOO_BAR=…`, `FOO_BAR: …`, a dashboard's name and value), anything labelled as a password, token or key, passwords in URLs, auth headers, Convex deploy keys, private keys, long base64 lines, and anything shaped like an API key, token or card number.
 - **Pages that make or show keys.** Any page whose address looks like it's for API keys, tokens, credentials, secrets or environment variables (OpenAI's /api-keys, GitHub's /settings/tokens, a Convex dashboard's settings and so on), and any screen whose text reads like a new key being shown ("copy it now, you won't be able to see it again"), is skipped whole, as a new key can be any shape. That covers an agent making a key for me with BrowserBear or ComputerCub too.
 - **Apps and sites I've excluded** from the menu ("Don't Record Slack", "Don't Record bank.com"). Excluding a site covers its subdomains.
@@ -63,16 +104,36 @@ There's no settings window. Use `defaults write app.mikecann.remembear <key> <va
 | `claudeConfigDir` | unset (`~/.claude`) | which Claude login to use |
 | `excludedApps`, `excludedSites` | empty | also editable from the menu |
 
-## Install
+## Your agents
 
-```bash
-bash restart.sh
-```
-
-The first time it opens, a setup window lists the permissions it needs (Screen Recording, Accessibility, and controlling Chrome), each with a red circle that turns green once it's on and a button that opens the right part of System Settings. It's under Permissions… in the menu later, or open RememBear.app again. To hook it up to Agent Archive:
+Any agent that can read files can read the summaries folder. I use [Agent Archive](https://agent-archive.mikecann.app), which backs them up and gives every agent a search tool for them:
 
 ```bash
 agent-archive configure-computer-history --dir "$HOME/Library/Application Support/RememBear/summaries"
 ```
 
-`uninstall.sh` removes the app. Add `--delete-data` to delete the events and summaries too.
+`restart.sh` also links `remembear` into `~/.local/bin`, so an agent can run `remembear search` from its shell.
+
+## Uninstall
+
+`bash uninstall.sh` removes the app. Add `--delete-data` to delete the events and summaries too.
+
+## Development
+
+```bash
+swift build
+swift test
+bash restart.sh     # build, sign and relaunch the app
+```
+
+It signs with your first Apple Development identity if you have one, so the permissions stick around when you rebuild. Without one it signs ad hoc and macOS asks again after every build. `AGENTS.md` has more for agents working on it, privacy checks first.
+
+## Art
+
+`docs/header.webp` is a generated banner for the public site. `icons/remembear.svg` is the app icon, BrowserBear's cub with a clock running backwards, and `icons/remembear.png` is rendered from it.
+
+## More tools
+
+You can find my other tools at [mikerosoft.app](https://mikerosoft.app).
+
+MIT licensed.
