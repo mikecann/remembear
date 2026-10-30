@@ -196,6 +196,9 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
             w.title = "RememBear"
             w.styleMask = [.titled, .closable]
             w.isReleasedWhenClosed = false
+            // A menu bar app's window otherwise opens on whichever Space it
+            // last used, where Mike may not be looking (ComputerCub hit this).
+            w.collectionBehavior.insert(.moveToActiveSpace)
             w.delegate = self
             w.center()
             window = w
