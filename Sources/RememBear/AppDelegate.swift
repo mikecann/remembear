@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let store = EventStore()
     private lazy var recorder = Recorder(settings: settings, store: store)
     private lazy var summarizer = Summarizer(settings: settings, store: store)
+    private lazy var setup = SetupWindowController()
     private var statusItem: NSStatusItem!
     private var iconTimer: Timer?
     /// The app that was in front when the menu opened. A menu bar app
@@ -25,14 +26,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateIcon()
         iconTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.updateIcon() }
 
-        if !Recorder.hasScreenAccess {
-            // Windows are read from screenshots, which need Screen Recording.
-            CGRequestScreenCaptureAccess()
-        }
-        if !AXIsProcessTrusted() {
-            // Shows macOS's own prompt, which leads to the Accessibility list.
-            AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
-        }
+        // The setup window asks for each permission and shows them going
+        // green, rather than macOS's prompts all at once.
+        if !Permissions.current().isComplete { setup.show() }
         if !settings.defaults.bool(forKey: "didRegisterLogin") {
             try? SMAppService.mainApp.register()
             settings.defaults.set(true, forKey: "didRegisterLogin")
@@ -42,6 +38,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.summarizer.kick()
         }
+    }
+
+    // Opening RememBear again (Spotlight, Finder) while it's running shows
+    // its permissions, as a menu bar app has no window of its own to show.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        setup.show()
+        return false
     }
 
     private func updateIcon() {
@@ -72,11 +75,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .idle: menu.addItem(disabled("Recording (you're away)"))
         case .locked: menu.addItem(disabled("Recording (screen locked)"))
         case .paused(let until): menu.addItem(disabled("Paused until \(Self.time(until))"))
-        case .needsScreenAccess: menu.addItem(item("Allow Screen Recording…", #selector(openScreenRecording)))
-        case .needsAccess:
-            menu.addItem(disabled("Recording windows"))
-            menu.addItem(item("Allow Accessibility access for Return and shortcuts…", #selector(openAccessibility)))
+        case .needsScreenAccess: menu.addItem(disabled("Not recording yet"))
+        case .needsAccess: menu.addItem(disabled("Recording windows"))
         }
+        // Always there, so the permissions can be checked after a macOS
+        // update or a rebuild quietly dropped one.
+        let left = Permissions.current().remaining
+        menu.addItem(item(left == 0 ? "Permissions…" : left == 1 ? "Finish Setting Up (1 left)…" : "Finish Setting Up (\(left) left)…", #selector(openSetup)))
         if let latest = summarizer.latest {
             let i = item("Last: \(latest.title)", #selector(openLatest))
             i.toolTip = latest.url.path
@@ -149,15 +154,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Actions
 
-    @objc private func openAccessibility() {
-        AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-    }
 
-    @objc private func openScreenRecording() {
-        CGRequestScreenCaptureAccess()
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-    }
+    @objc private func openSetup() { setup.show() }
 
     @objc private func openLatest() {
         if let url = summarizer.latest?.url { NSWorkspace.shared.open(url) }

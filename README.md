@@ -56,7 +56,7 @@ There's no settings window. Use `defaults write app.mikecann.remembear <key> <va
 bash restart.sh
 ```
 
-Then allow RememBear under System Settings › Privacy & Security › Screen & System Audio Recording (to read windows) and Accessibility (for Return and shortcuts), and say yes when it asks to control Chrome (to check for incognito windows). To hook it up to Agent Archive:
+The first time it opens, a setup window lists the permissions it needs (Screen Recording, Accessibility, and controlling Chrome), each with a red circle that turns green once it's on and a button that opens the right part of System Settings. It's under Permissions… in the menu later, or open RememBear.app again. To hook it up to Agent Archive:
 
 ```bash
 agent-archive configure-computer-history --dir "$HOME/Library/Application Support/RememBear/summaries"
