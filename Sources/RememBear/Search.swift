@@ -110,6 +110,8 @@ final class Embedder {
         p.executableURL = Self.python
         p.arguments = [server.path]
         p.currentDirectoryURL = server.deletingLastPathComponent()
+        // Embedding is never urgent, so keep the model off the cores Mike is using.
+        p.qualityOfService = .background
         var env = ProcessInfo.processInfo.environment
         env["REMEMBEAR_EMBEDDER_TOKEN"] = token
         env["HF_HUB_DISABLE_TELEMETRY"] = "1"

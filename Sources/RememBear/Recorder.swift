@@ -148,7 +148,11 @@ final class Recorder {
         frontURL = front.url.map { (front.app.bundleID, $0) }
         lastSnapshot = now
         capturing = true
-        Task { [self] in
+        // Background priority: a plain Task here inherits the main thread's
+        // user-initiated priority, and Vision's accurate recognition then
+        // spread over the performance cores (296% CPU while Mike was working,
+        // 30 Oct 2026). History can wait a moment; Mike's apps can't.
+        Task(priority: .background) { [self] in
             let read = await ScreenReader.read(windowID: window.id)
             await MainActor.run { finish(front, key: key, changed: changed, read: read, at: now) }
         }
@@ -193,7 +197,7 @@ final class Recorder {
         // Only what was recorded gets a vector, after the same privacy
         // checks, so search never holds anything the events wouldn't.
         let shot = (app: front.app.name, bundleID: front.app.bundleID, title: title, url: front.url, excerpt: ScreenSearch.excerpt(of: text))
-        Task.detached(priority: .utility) {
+        Task.detached(priority: .background) {
             guard let vector = await Embedder.shared.embed(image: image) else { return }
             ShotStore.shared.add(ScreenSearch.Shot(at: at, app: shot.app, bundleID: shot.bundleID, title: shot.title,
                                                    url: shot.url, excerpt: shot.excerpt, vector: vector))
