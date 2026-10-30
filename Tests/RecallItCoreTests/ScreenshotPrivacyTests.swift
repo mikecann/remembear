@@ -86,4 +86,26 @@ final class ScreenshotPrivacyTests: XCTestCase {
         XCTAssertEqual(ScreenText.lines(pieces), ["Title", "NAME_ONE  value-one", "NAME_TWO  value-two"])
         XCTAssertEqual(Privacy.redactScreenText(ScreenText.lines(pieces).joined(separator: "\n")), "Title\nNAME_ONE  [redacted]\nNAME_TWO  [redacted]")
     }
+
+    func testKeyPagesAreNeverCaptured() {
+        for url in ["https://platform.openai.com/api-keys", "https://github.com/settings/tokens/new", "https://console.cloud.google.com/apis/credentials?project=x",
+                    "https://dash.cloudflare.com/profile/api-tokens", "https://vercel.com/mike/app/settings/environment-variables",
+                    "https://dashboard.convex.dev/t/mike/poddle/happy-animal-123/settings/environment-variables", "https://resend.com/api-keys",
+                    "https://console.anthropic.com/settings/keys", "https://github.com/mikecann/poddle/settings/secrets/actions"] {
+            XCTAssertTrue(Privacy.isKeyPage(url: url), url)
+            let w = BrowserWindow(mode: "normal", title: "Keys", url: url)
+            XCTAssertFalse(rules.allowsBrowser(bundleID: "com.google.Chrome", windowListTitle: "Keys", script: w), url)
+        }
+        for url in ["https://github.com/convex/convex/pull/59871", "https://x.com/notifications", "https://dashboard.convex.dev/t/mike/poddle/happy-animal-123/data"] {
+            XCTAssertFalse(Privacy.isKeyPage(url: url), url)
+        }
+    }
+
+    func testAKeyBeingShownDropsTheWholeCapture() {
+        XCTAssertTrue(Privacy.looksLikeKeyBeingShown("Save your key\nPlease save this secret key somewhere safe. You won't be able to view it again."))
+        XCTAssertTrue(Privacy.looksLikeKeyBeingShown("Make sure to copy your personal access token now."))
+        XCTAssertTrue(Privacy.looksLikeKeyBeingShown("API key created"))
+        XCTAssertTrue(Privacy.looksLikeKeyBeingShown("Client secret  Copy"))
+        XCTAssertFalse(Privacy.looksLikeKeyBeingShown("Mike: ship it when the tests pass\nProjects  69 projects"))
+    }
 }

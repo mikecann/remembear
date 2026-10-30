@@ -77,6 +77,7 @@ extension PrivacyRules {
         guard Privacy.isChromium(bundleID), let script, script.mode == "normal" else { return false }
         guard let listed = windowListTitle?.trimmingCharacters(in: .whitespaces), !listed.isEmpty,
               script.title?.trimmingCharacters(in: .whitespaces) == listed else { return false }
+        if Privacy.isKeyPage(url: script.url) { return false }
         return allows(bundleID: bundleID, windowTitle: listed, url: script.url)
     }
 }
@@ -227,5 +228,38 @@ public enum Privacy {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "+/="))
         guard s.unicodeScalars.allSatisfy({ allowed.contains($0) && $0.isASCII }) else { return false }
         return s.contains(where: \.isUppercase) && s.contains(where: \.isLowercase) && s.contains(where: \.isNumber)
+    }
+
+    // MARK: Pages that show keys
+
+    // Where API keys, tokens and secrets get made or shown: OpenAI's
+    // /api-keys, GitHub's /settings/tokens, Google's /apis/credentials,
+    // Cloudflare's /api-tokens, Vercel and Convex's environment variables,
+    // and so on. Matched on the path, so it covers sites not listed here.
+    private static let keyPagePath = try! NSRegularExpression(
+        pattern: #"api[-_]?keys?|apikey|auth[-_]?keys?|authkeys|[-_/]tokens?\b|access[-_]?tokens?|credentials|secrets?\b|/keys\b|environment[-_]variables|/env\b|deploy[-_]?keys?"#,
+        options: .caseInsensitive)
+
+    /// A page whose address says it's for keys, tokens or secrets. Nothing
+    /// from it is captured, as a new key can be any shape and masking only
+    /// knows the common ones. A Convex dashboard's settings (environment
+    /// variables and deploy keys) count too.
+    public static func isKeyPage(url: String?) -> Bool {
+        guard let url, let c = URLComponents(string: url), let host = c.host?.lowercased() else { return false }
+        let path = c.path + (c.fragment.map { "#" + $0 } ?? "")
+        if host == "dashboard.convex.dev", path.contains("/settings") { return true }
+        return keyPagePath.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)) != nil
+    }
+
+    // What a page says when it has just made a key and shows it once.
+    private static let keyShownOnce = try! NSRegularExpression(
+        pattern: #"(won'?t|will not|can'?t|cannot|not be able to) (be able to )?(see|view|show|display)[a-z ]{0,20}again|(only|just) be (shown|displayed|visible) once|shown only once|copy (it|this|your)( new)? ([a-z]+ )?(key|token|secret) now|make sure (to|you) copy|(api|secret|access|deploy) (key|token) (was )?(created|generated)|(new|your) (api|secret|access|deploy|personal access) (key|token)|client secret|private key"#,
+        options: .caseInsensitive)
+
+    /// Screen text that reads like a key being shown: "Copy your new API
+    /// key now. You won't be able to see it again." The whole capture is
+    /// dropped, rather than trusting masking to find the key in it.
+    public static func looksLikeKeyBeingShown(_ text: String) -> Bool {
+        keyShownOnce.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
 }

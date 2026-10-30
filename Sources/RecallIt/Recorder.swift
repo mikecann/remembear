@@ -166,7 +166,15 @@ final class Recorder {
             Log.info("dropped a capture: the window changed while it was read")
             return
         }
-        var text = Privacy.redactScreenText(lines.joined(separator: "\n"))
+        let raw = lines.joined(separator: "\n")
+        // A page that has just made a key is left out whole: a new key can
+        // be any shape, and masking only knows the common ones.
+        if Privacy.looksLikeKeyBeingShown(raw) || Privacy.looksLikeKeyBeingShown(front.window.title ?? "") {
+            suppressed += 1
+            Log.info("skipped a window that looked like it was showing a key")
+            return
+        }
+        var text = Privacy.redactScreenText(raw)
         if text.count > maxText { text = String(text.prefix(maxText)) }
         let shown = text.split(whereSeparator: \.isNewline).map(String.init)
         let title = front.window.title.map(Privacy.redactScreenText)
