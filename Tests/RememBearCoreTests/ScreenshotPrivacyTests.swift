@@ -91,7 +91,8 @@ final class ScreenshotPrivacyTests: XCTestCase {
         for url in ["https://platform.openai.com/api-keys", "https://github.com/settings/tokens/new", "https://console.cloud.google.com/apis/credentials?project=x",
                     "https://dash.cloudflare.com/profile/api-tokens", "https://vercel.com/mike/app/settings/environment-variables",
                     "https://dashboard.convex.dev/t/mike/poddle/happy-animal-123/settings/environment-variables", "https://resend.com/api-keys",
-                    "https://console.anthropic.com/settings/keys", "https://github.com/mikecann/poddle/settings/secrets/actions"] {
+                    "https://console.anthropic.com/settings/keys", "https://github.com/mikecann/poddle/settings/secrets/actions",
+                    "https://my.1password.com/app#/everything/AllItems", "https://start.1password.com/signin", "https://vault.bitwarden.com/#/vault"] {
             XCTAssertTrue(Privacy.isKeyPage(url: url), url)
             let w = BrowserWindow(mode: "normal", title: "Keys", url: url)
             XCTAssertFalse(rules.allowsBrowser(bundleID: "com.google.Chrome", windowListTitle: "Keys", script: w), url)

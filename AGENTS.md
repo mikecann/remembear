@@ -4,7 +4,7 @@ RememBear is a native macOS 14+ menu bar app, part of Mikerosoft, that replaces 
 
 ## Rules
 
-- Privacy first. Every privacy check (`PrivacyRules.allows`, `allowsBrowser`) runs before a window is captured and again after, before an event is built. Private browser windows, password managers and excluded apps and sites must never reach the events folder, and screen text always goes through `Privacy.redactScreenText`. When in doubt, leave it out: a browser window that can't be confirmed as normal over AppleScript isn't recorded.
+- Privacy first. Every privacy check (`PrivacyRules.allows`, `allowsBrowser`) runs before a window is captured and again after, before an event is built. Private browser windows, password managers (apps and web vaults), terminals and excluded apps and sites must never reach the events folder, and screen text always goes through `Privacy.redactScreenText`. When in doubt, leave it out: a browser window that can't be confirmed as normal over AppleScript isn't recorded.
 - Never read other apps' windows through the Accessibility API (tree walks, element-at-point, focused-element polling) or turn on `AXManualAccessibility`/`AXEnhancedUserInterface`: each read runs on the target app's main thread, and it made Threadbear and Chrome lag (30 Oct 2026). Screenshots and the window list cost the app nothing. Accessibility trust is only for the global key monitor.
 - Screenshots stay in memory and are dropped once read and embedded. Never write one to disk or send one anywhere but the local embedder (127.0.0.1, token in embedder.json, 0600).
 - Only captures that were recorded (passed every privacy check, wrote an event) get a search vector. `search.sqlite` holds vectors, metadata and a 400-character masked excerpt, kept `ScreenSearch.keepDays` (30); Forget the Last Hour clears it.
@@ -34,7 +34,7 @@ tail -f ~/Library/Logs/remembear.log
 
 In a sandbox, keep module caches inside the clone and use `--disable-sandbox`, as `restart.sh` does.
 
-After a recorder change, check by hand: switch apps and tabs, open a Chrome incognito window and confirm nothing from it lands in `events/`, put an environment variable on screen (`echo FOO_BAR=secret` in Terminal) and check it's masked, send a Slack message and check the submit event and the text that follows, then wait for the next 10-minute summary in the log.
+After a recorder change, check by hand: switch apps and tabs, open a Chrome incognito window and confirm nothing from it lands in `events/`, bring Terminal to the front and confirm nothing from it lands in `events/`, put an environment variable on screen (`FOO_BAR=secret` in TextEdit) and check it's masked, send a Slack message and check the submit event and the text that follows, then wait for the next 10-minute summary in the log.
 
 ## Screenshot search
 

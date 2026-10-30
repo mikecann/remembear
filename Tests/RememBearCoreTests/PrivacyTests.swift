@@ -32,6 +32,12 @@ final class PrivacyTests: XCTestCase {
         XCTAssertFalse(PrivacyRules().allows(bundleID: "com.apple.loginwindow", windowTitle: nil, url: nil))
     }
 
+    func testTerminalsAreNeverRecorded() {
+        for id in ["com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty", "dev.warp.Warp-Stable", "com.github.wez.wezterm"] {
+            XCTAssertFalse(PrivacyRules().allows(bundleID: id, windowTitle: "-zsh", url: nil), id)
+        }
+    }
+
     func testExcludedSitesCoverSubdomainsOnly() {
         XCTAssertFalse(rules.allows(bundleID: "com.google.Chrome", windowTitle: "Bank", url: "https://bank.com/"))
         XCTAssertFalse(rules.allows(bundleID: "com.google.Chrome", windowTitle: "Bank", url: "https://login.bank.com/x"))

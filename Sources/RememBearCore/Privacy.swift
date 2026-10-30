@@ -18,6 +18,10 @@ public struct PrivacyRules: Equatable, Sendable {
         "com.apple.SecurityAgent", "com.apple.LocalAuthentication.UIAgent", "com.apple.coreservices.uiagent",
         // The lock screen and screen saver.
         "com.apple.loginwindow", "com.apple.ScreenSaver.Engine",
+        // Terminals: env dumps, `cat .env` and keys printed by CLIs come in
+        // shapes masking can't be sure of, so nothing from them is kept.
+        "com.apple.Terminal", "com.googlecode.iterm2", "com.mitchellh.ghostty", "dev.warp.Warp-Stable",
+        "com.github.wez.wezterm", "org.alacritty", "net.kovidgoyal.kitty", "co.zeit.hyper", "org.tabby",
     ]
 
     public init(excludedApps: Set<String> = [], excludedSites: [String] = []) {
@@ -240,6 +244,8 @@ public enum Privacy {
         pattern: #"api[-_]?keys?|apikey|auth[-_]?keys?|authkeys|[-_/]tokens?\b|access[-_]?tokens?|credentials|secrets?\b|/keys\b|environment[-_]variables|/env\b|deploy[-_]?keys?"#,
         options: .caseInsensitive)
 
+    private static let passwordManagerHosts = ["1password.com", "1password.ca", "1password.eu", "bitwarden.com", "bitwarden.eu", "lastpass.com", "dashlane.com", "pass.proton.me"]
+
     /// A page whose address says it's for keys, tokens or secrets. Nothing
     /// from it is captured, as a new key can be any shape and masking only
     /// knows the common ones. A Convex dashboard's settings (environment
@@ -248,6 +254,8 @@ public enum Privacy {
         guard let url, let c = URLComponents(string: url), let host = c.host?.lowercased() else { return false }
         let path = c.path + (c.fragment.map { "#" + $0 } ?? "")
         if host == "dashboard.convex.dev", path.contains("/settings") { return true }
+        // Password managers' web vaults, all of them, on top of their apps.
+        if passwordManagerHosts.contains(where: { host == $0 || host.hasSuffix("." + $0) }) { return true }
         return keyPagePath.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)) != nil
     }
 
