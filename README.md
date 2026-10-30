@@ -4,6 +4,12 @@ A computer history for your Mac that you own: it remembers what you were doing, 
 
 macOS 14 or later
 
+<!-- media: hero -->
+<a href="docs/media/remembear.mp4"><img src="docs/media/remembear.gif" alt="The RememBear cub explains: it keeps track of what's on your Mac's screen, Claude writes a short summary every ten minutes, and your AI agents can ask what you were doing on Tuesday afternoon, while passwords and incognito windows are skipped and screenshots never leave your Mac" width="720"></a>
+
+<sub>25 s. Click for the video with sound.</sub>
+<!-- /media: hero -->
+
 ## What it is
 
 My own version of ChatGPT's Computer History, which I've turned off. It's a little menu bar app that keeps track of what I'm doing on my Mac, and every 10 minutes it asks Claude (on my own subscription) to write a short summary. Every 6 hours it writes a longer one covering the whole stretch. The summaries are Markdown files in the same format Codex used, so [Agent Archive](https://agent-archive.mikecann.app) backs them up and my agents can search them ("what was I doing on Tuesday afternoon?").
@@ -130,7 +136,7 @@ It signs with your first Apple Development identity if you have one, so the perm
 
 ## Art
 
-`docs/header.webp` is a generated banner for the public site. `icons/remembear.svg` is the app icon, BrowserBear's cub with a clock running backwards, and `icons/remembear.png` is rendered from it.
+`docs/header.webp` is a generated banner for the public site, and `docs/media/remembear.mp4` is the explainer, made with Remotion. `icons/remembear.svg` is the app icon, BrowserBear's cub with a clock running backwards, and `icons/remembear.png` is rendered from it.
 
 ## More tools
 
