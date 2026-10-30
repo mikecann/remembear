@@ -1,9 +1,9 @@
 import Foundation
-import RecallItCore
+import RememBearCore
 
 /// Appends events to `events/<window>.jsonl`, one file per 10-minute window.
 final class EventStore {
-    private let queue = DispatchQueue(label: "recall-it.store")
+    private let queue = DispatchQueue(label: "remembear.store")
     private let encoder = EventCoding.encoder()
     private var handle: FileHandle?
     private var handleWindow: TimeWindow?

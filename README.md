@@ -1,8 +1,8 @@
-# Recall It
+# RememBear
 
 My own version of ChatGPT's Computer History, which I've turned off. It's a little menu bar app that keeps track of what I'm doing on my Mac, and every 10 minutes it asks Claude (on my own subscription) to write a short summary. Every 6 hours it writes a longer one covering the whole stretch. The summaries are Markdown files in the same format Codex used, so Agent Archive backs them up and my agents can search them ("what was I doing on Tuesday afternoon?").
 
-Part of Mikerosoft, so yes, the name is a dig at Microsoft Recall.
+Part of Mikerosoft, and one of its bears with BrowserBear and ComputerCub. It was called Recall It until 30 Oct 2026.
 
 ## What it records
 
@@ -18,7 +18,7 @@ Until 30 Oct 2026 it read windows through the Accessibility API instead, and ask
 
 ## What it never records
 
-- **Private browser windows.** The window list only has a page's title, and an incognito window's title doesn't say it's incognito, so Recall It asks Chrome (and other Chromium browsers) over AppleScript whether the front window is normal or incognito, and records nothing unless it's normal. Safari and Firefox can't say, so nothing from them is recorded at all.
+- **Private browser windows.** The window list only has a page's title, and an incognito window's title doesn't say it's incognito, so RememBear asks Chrome (and other Chromium browsers) over AppleScript whether the front window is normal or incognito, and records nothing unless it's normal. Safari and Firefox can't say, so nothing from them is recorded at all.
 - **Password managers** (1Password, Passwords, Keychain Access, Bitwarden, KeePassXC, Proton Pass and friends), macOS's own password and Touch ID prompts, and the lock screen.
 - **Secrets on screen.** A screenshot sees everything, so the text is masked before it's written: every environment variable's value (`FOO_BAR=…`, `FOO_BAR: …`, a dashboard's name and value), anything labelled as a password, token or key, passwords in URLs, auth headers, Convex deploy keys, private keys, long base64 lines, and anything shaped like an API key, token or card number.
 - **Pages that make or show keys.** Any page whose address looks like it's for API keys, tokens, credentials, secrets or environment variables (OpenAI's /api-keys, GitHub's /settings/tokens, a Convex dashboard's settings and so on), and any screen whose text reads like a new key being shown ("copy it now, you won't be able to see it again"), is skipped whole, as a new key can be any shape. That covers an agent making a key for me with BrowserBear or ComputerCub too.
@@ -28,9 +28,9 @@ Those checks happen before a window is captured, and again after, so excluded st
 
 ## Where things go
 
-- `~/Library/Application Support/Recall It/events/`: raw events, one file per 10 minutes, **deleted after 48 hours**.
-- `~/Library/Application Support/Recall It/summaries/`: the summaries, kept. Agent Archive reads this folder.
-- `~/Library/Logs/recall-it.log`: what it did and when, with no activity content.
+- `~/Library/Application Support/RememBear/events/`: raw events, one file per 10 minutes, **deleted after 48 hours**.
+- `~/Library/Application Support/RememBear/summaries/`: the summaries, kept. Agent Archive reads this folder.
+- `~/Library/Logs/remembear.log`: what it did and when, with no activity content.
 
 Both folders are owner-only. The only thing that leaves the Mac is the 10-minute digest sent to Claude to be summarised, and the summaries Agent Archive backs up.
 
@@ -40,7 +40,7 @@ Pause for an hour or until tomorrow, stop recording the app in front (or the sit
 
 ## Settings
 
-There's no settings window. Use `defaults write com.mikerosoft.recall-it <key> <value>`:
+There's no settings window. Use `defaults write app.mikecann.remembear <key> <value>`:
 
 | Key | Default | |
 |---|---|---|
@@ -56,10 +56,10 @@ There's no settings window. Use `defaults write com.mikerosoft.recall-it <key> <
 bash restart.sh
 ```
 
-Then allow Recall It under System Settings › Privacy & Security › Screen & System Audio Recording (to read windows) and Accessibility (for Return and shortcuts), and say yes when it asks to control Chrome (to check for incognito windows). To hook it up to Agent Archive:
+Then allow RememBear under System Settings › Privacy & Security › Screen & System Audio Recording (to read windows) and Accessibility (for Return and shortcuts), and say yes when it asks to control Chrome (to check for incognito windows). To hook it up to Agent Archive:
 
 ```bash
-agent-archive configure-computer-history --dir "$HOME/Library/Application Support/Recall It/summaries"
+agent-archive configure-computer-history --dir "$HOME/Library/Application Support/RememBear/summaries"
 ```
 
 `uninstall.sh` removes the app. Add `--delete-data` to delete the events and summaries too.

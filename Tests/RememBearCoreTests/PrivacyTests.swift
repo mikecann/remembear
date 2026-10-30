@@ -1,5 +1,5 @@
 import XCTest
-@testable import RecallItCore
+@testable import RememBearCore
 
 final class PrivacyTests: XCTestCase {
     let rules = PrivacyRules(excludedApps: ["com.example.bank"], excludedSites: ["bank.com", ".Health.gov."])
@@ -50,7 +50,7 @@ final class PrivacyTests: XCTestCase {
         XCTAssertEqual(Privacy.redactSecrets("key sk-proj-abcdefghijklmnop1234 here"), "key [redacted] here")
         XCTAssertEqual(Privacy.redactSecrets("card 4111 1111 1111 1111 ok"), "card [redacted] ok")
         XCTAssertEqual(Privacy.redactSecrets("token Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z0AbC"), "token [redacted]")
-        let path = "/Users/m5-mike/dev/me/mikerosoft-tools/recall-it/Sources/RecallItCore/Privacy.swift"
+        let path = "/Users/m5-mike/dev/me/mikerosoft-tools/remembear/Sources/RememBearCore/Privacy.swift"
         XCTAssertEqual(Privacy.redactSecrets(path), path)
         let sha = "commit 3f9a2b7c1d4e5f60718293a4b5c6d7e8f9012345"
         XCTAssertEqual(Privacy.redactSecrets(sha), sha)

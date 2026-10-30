@@ -1,5 +1,5 @@
 import XCTest
-@testable import RecallItCore
+@testable import RememBearCore
 
 final class WindowAndScheduleTests: XCTestCase {
     func date(_ s: String) -> Date { ISO8601DateFormatter().date(from: s)! }
@@ -59,7 +59,7 @@ final class WindowAndScheduleTests: XCTestCase {
     }
 
     func testSettingsDefaultsAndPause() {
-        let suite = "recall-it-tests-\(UUID().uuidString)"
+        let suite = "remembear-tests-\(UUID().uuidString)"
         let s = Settings(defaults: UserDefaults(suiteName: suite)!)
         defer { UserDefaults().removePersistentDomain(forName: suite) }
         XCTAssertEqual(s.tenMinuteModel, "haiku")

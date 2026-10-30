@@ -1,5 +1,5 @@
 import Foundation
-import RecallItCore
+import RememBearCore
 
 /// Writes the 10-minute and 6-hour summaries with `claude -p` on Mike's own
 /// subscription, and deletes raw events after 48 hours. Each pass works out
@@ -8,7 +8,7 @@ import RecallItCore
 final class Summarizer {
     private let settings: Settings
     private let store: EventStore
-    private let work = DispatchQueue(label: "recall-it.summarize")
+    private let work = DispatchQueue(label: "remembear.summarize")
     private var timer: Timer?
     private var running = false
     private var attempts: [TimeWindow: Int] = [:]

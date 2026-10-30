@@ -1,6 +1,6 @@
 import AppKit
 import ApplicationServices
-import RecallItCore
+import RememBearCore
 import ScreenCaptureKit
 import Vision
 
@@ -203,7 +203,7 @@ final class Recorder {
 
     /// The browser's front window over AppleScript: its mode (normal or
     /// incognito), title and URL. Nil when it can't be asked, which leaves
-    /// the window out. The first time, macOS asks Mike to let Recall It
+    /// the window out. The first time, macOS asks Mike to let RememBear
     /// control the browser.
     private func frontBrowserWindow(_ bundleID: String) -> BrowserWindow? {
         let source = """
@@ -329,11 +329,11 @@ enum ScreenReader {
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
         try VNImageRequestHandler(cgImage: image).perform([request])
-        let pieces = (request.results ?? []).compactMap { o -> RecallItCore.RecognizedText? in
+        let pieces = (request.results ?? []).compactMap { o -> RememBearCore.RecognizedText? in
             guard let text = o.topCandidates(1).first?.string else { return nil }
             // Vision's boxes are 0...1 from the bottom left.
             let b = o.boundingBox
-            return RecallItCore.RecognizedText(text: text, x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
+            return RememBearCore.RecognizedText(text: text, x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
         }
         return ScreenText.lines(pieces)
     }

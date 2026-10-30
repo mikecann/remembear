@@ -72,7 +72,7 @@ public enum SummaryFile {
         out += "title: \(yamlScalar(draft.title))\n"
         out += "description: \(yamlScalar(draft.description))\n"
         out += "applications: [\(applications.map(yamlScalar).joined(separator: ", "))]\n"
-        out += "generator: recall-it\n"
+        out += "generator: remembear\n"
         out += "---\n\n"
         out += draft.body
         if !citations.isEmpty {

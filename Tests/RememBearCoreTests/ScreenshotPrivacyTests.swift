@@ -1,5 +1,5 @@
 import XCTest
-@testable import RecallItCore
+@testable import RememBearCore
 
 /// Recording reads screenshots now, which see everything on screen, and
 /// window titles from the window list, which don't say whether a browser

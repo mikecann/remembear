@@ -1,5 +1,5 @@
 import XCTest
-@testable import RecallItCore
+@testable import RememBearCore
 
 final class DigestAndSummaryTests: XCTestCase {
     let t0 = ISO8601DateFormatter().date(from: "2026-10-29T06:20:05Z")!

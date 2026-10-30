@@ -1,6 +1,6 @@
 import AppKit
 import ApplicationServices
-import RecallItCore
+import RememBearCore
 import ServiceManagement
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -121,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let login = item("Open at Login", #selector(toggleLogin))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
-        menu.addItem(item("Quit Recall It", #selector(quit)))
+        menu.addItem(item("Quit RememBear", #selector(quit)))
     }
 
     private func item(_ title: String, _ action: Selector) -> NSMenuItem {

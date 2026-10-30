@@ -1,6 +1,6 @@
 import Foundation
 
-/// UserDefaults for com.mikerosoft.recall-it. No settings window: the menu
+/// UserDefaults for app.mikecann.remembear. No settings window: the menu
 /// covers pausing and excluding, and `defaults write` covers the rest.
 public final class Settings: @unchecked Sendable {
     public let defaults: UserDefaults
