@@ -6,24 +6,24 @@ Part of Mikerosoft, so yes, the name is a dig at Microsoft Recall.
 
 ## What it records
 
-Through the macOS Accessibility API, while I'm at the Mac:
+While I'm at the Mac:
 
-- the app and window in front, its title and (in browsers) the URL
-- the words visible in that window when it changes, and once a minute after that if they change
-- what I click on (the button or link name, not the screen)
-- Return in a text field, with what the field held (a sent message, a search)
-- keyboard shortcuts like ⌘T
+- the app and window in front, its title and (in Chrome and other Chromium browsers) the URL
+- the words in that window when it changes, once a minute after that if they change, and just after I press Return. The words come from a screenshot of that one window, read by macOS's own text recognition on the Mac. The screenshot is never saved or sent anywhere: it's dropped as soon as it's read
+- that I pressed Return (a sent message, a search), and keyboard shortcuts like ⌘T
 
-It takes no screenshots and records no audio, and it doesn't log keystrokes. It stops when I'm away for 5 minutes or the screen is locked.
+It records no audio and doesn't log keystrokes. It stops when I'm away for 5 minutes or the screen is locked.
+
+Until 30 Oct 2026 it read windows through the Accessibility API instead, and asked what was under every click. That made every app it read do the work itself: Threadbear took half a second to switch views, and Chrome and Electron apps had to keep their accessibility trees built. A screenshot comes from the window server and costs the app nothing.
 
 ## What it never records
 
-- **Private browser windows.** Chrome, Helium and other Chromium incognito windows, Safari Private Browsing, Firefox private windows and Edge InPrivate are spotted from the window title and skipped completely. A browser window whose title can't be read is skipped as well.
-- **Password managers** (1Password, Passwords, Keychain Access, Bitwarden and friends), and the lock screen.
-- **Secure text fields**, and fields labelled like passwords, codes or API keys. Anything that looks like a key, token or card number in window text gets masked.
+- **Private browser windows.** The window list only has a page's title, and an incognito window's title doesn't say it's incognito, so Recall It asks Chrome (and other Chromium browsers) over AppleScript whether the front window is normal or incognito, and records nothing unless it's normal. Safari and Firefox can't say, so nothing from them is recorded at all.
+- **Password managers** (1Password, Passwords, Keychain Access, Bitwarden, KeePassXC, Proton Pass and friends), macOS's own password and Touch ID prompts, and the lock screen.
+- **Secrets on screen.** A screenshot sees everything, so the text is masked before it's written: every environment variable's value (`FOO_BAR=…`, `FOO_BAR: …`, a dashboard's name and value), anything labelled as a password, token or key, passwords in URLs, auth headers, Convex deploy keys, private keys, long base64 lines, and anything shaped like an API key, token or card number.
 - **Apps and sites I've excluded** from the menu ("Don't Record Slack", "Don't Record bank.com"). Excluding a site covers its subdomains.
 
-All of those checks happen before anything is written, so excluded stuff never reaches the disk.
+Those checks happen before a window is captured, and again after, so excluded stuff never reaches the disk.
 
 ## Where things go
 
@@ -55,7 +55,7 @@ There's no settings window. Use `defaults write com.mikerosoft.recall-it <key> <
 bash restart.sh
 ```
 
-Then allow Recall It under System Settings › Privacy & Security › Accessibility. To hook it up to Agent Archive:
+Then allow Recall It under System Settings › Privacy & Security › Screen & System Audio Recording (to read windows) and Accessibility (for Return and shortcuts), and say yes when it asks to control Chrome (to check for incognito windows). To hook it up to Agent Archive:
 
 ```bash
 agent-archive configure-computer-history --dir "$HOME/Library/Application Support/Recall It/summaries"

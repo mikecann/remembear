@@ -63,6 +63,7 @@ $ICON_KEY
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSAppleEventsUsageDescription</key><string>Recall It asks your browser whether its front window is private, so it never records incognito windows.</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSHumanReadableCopyright</key><string>Copyright © 2026 Mike Cann. MIT licensed.</string>
 </dict></plist>

@@ -25,6 +25,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateIcon()
         iconTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.updateIcon() }
 
+        if !Recorder.hasScreenAccess {
+            // Windows are read from screenshots, which need Screen Recording.
+            CGRequestScreenCaptureAccess()
+        }
         if !AXIsProcessTrusted() {
             // Shows macOS's own prompt, which leads to the Accessibility list.
             AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
@@ -45,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch recorder.status {
         case .recording, .idle, .locked: symbol = "clock.arrow.circlepath"
         case .paused: symbol = "pause.circle"
-        case .needsAccess: symbol = "exclamationmark.circle"
+        case .needsAccess, .needsScreenAccess: symbol = "exclamationmark.circle"
         }
         guard statusItem.button?.image?.accessibilityDescription != symbol else { return }
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol)
@@ -68,7 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .idle: menu.addItem(disabled("Recording (you're away)"))
         case .locked: menu.addItem(disabled("Recording (screen locked)"))
         case .paused(let until): menu.addItem(disabled("Paused until \(Self.time(until))"))
-        case .needsAccess: menu.addItem(item("Allow Accessibility access…", #selector(openAccessibility)))
+        case .needsScreenAccess: menu.addItem(item("Allow Screen Recording…", #selector(openScreenRecording)))
+        case .needsAccess:
+            menu.addItem(disabled("Recording windows"))
+            menu.addItem(item("Allow Accessibility access for Return and shortcuts…", #selector(openAccessibility)))
         }
         if let latest = summarizer.latest {
             let i = item("Last: \(latest.title)", #selector(openLatest))
@@ -145,6 +152,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func openAccessibility() {
         AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    }
+
+    @objc private func openScreenRecording() {
+        CGRequestScreenCaptureAccess()
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
 
     @objc private func openLatest() {

@@ -54,8 +54,9 @@ public enum Prompts {
         var out = "Window: \(span(window, timeZone))\n\n"
         out += "## Previous summary\n\n" + (previousSummary.map { trim($0, 4_000) } ?? "None.") + "\n\n"
         out += "## Activity log\n\n"
-        out += "Times are local. \"window:\" lines are app | window title | URL, followed by the visible text that was new at that moment. "
-        out += "Clicks, shortcuts and Return presses in text fields (with what the field held) follow in order.\n\n"
+        out += "Times are local. \"window:\" lines are app | window title | URL, followed by the visible text that was new at that moment, "
+        out += "read from a screenshot by text recognition, so expect the odd misread word and text from every part of the window. "
+        out += "Shortcuts and Return presses (a message sent, a search, a form) follow in order. Older logs may also have clicks.\n\n"
         out += digest.isEmpty ? "(no activity recorded)" : digest
         return out
     }

@@ -1,39 +1,45 @@
 import AppKit
 import ApplicationServices
 import RecallItCore
+import ScreenCaptureKit
+import Vision
 
-/// Watches what Mike does through the Accessibility API: the focused window
-/// and its text, clicks, Return in text fields, and keyboard shortcuts. No
-/// screenshots, no audio, and no per-keystroke log: typed text is only read
-/// from the field when Return sends it.
+/// Watches what Mike does: the window in front and the text on it, Return
+/// in a text field and keyboard shortcuts. The text comes from a screenshot
+/// of that one window, read by on-device text recognition and then thrown
+/// away; the image is never written down.
 ///
-/// Every check against the privacy rules happens before an event is built,
+/// Until 30 Oct 2026 it read windows through the Accessibility API, walking
+/// each one's tree and asking what was under every click. That made each
+/// app it read do the work on its own main thread: Threadbear took half a
+/// second to switch views, and Chrome and Electron apps had to keep their
+/// whole accessibility tree built. A screenshot comes from the window server
+/// and costs the app nothing. Accessibility is still needed, but only for
+/// the global key monitor.
+///
+/// Every privacy check happens before a window is captured, and again after,
 /// so nothing from an excluded app, an excluded site or a private window is
 /// ever written down.
 final class Recorder {
     enum Status: Equatable {
-        case recording, paused(until: Date), needsAccess, idle, locked
+        case recording, paused(until: Date), needsScreenAccess, needsAccess, idle, locked
     }
 
     private let settings: Settings
     private let store: EventStore
-    private let ax = DispatchQueue(label: "recall-it.ax")
     private var timer: Timer?
     private var monitors: [Any] = []
     private var trusted = false
-    private var lastClick = Date.distantPast
-    private var typingRead: DispatchWorkItem?
 
-    // Only touched on the ax queue.
     private var lastKey: String?
     private var pendingKey: String?
     private var lastLines = Set<String>()
     private var lastSnapshot = Date.distantPast
-    private var webTurnedOn = Set<pid_t>()
-    private var typed: (element: AXUIElement, value: String, at: Date)?
-    /// The last polled window's URL, so clicks in it can be checked against
-    /// excluded sites without walking the page again.
-    private var lastWindow: (pid: pid_t, windowID: CGWindowID, url: String?)?
+    /// Return was pressed: look again a moment later, when what was sent
+    /// shows in the window.
+    private var lookAgainAt: Date?
+    private var capturing = false
+    private var loggedScriptError = Set<String>()
 
     /// Read on the main thread for the menu.
     private(set) var frontURL: (bundleID: String, url: String)?
@@ -54,13 +60,20 @@ final class Recorder {
         refreshTrust()
     }
 
+    static var hasScreenAccess: Bool { CGPreflightScreenCaptureAccess() }
+
     var status: Status {
+        if !Self.hasScreenAccess { return .needsScreenAccess }
         if !AXIsProcessTrusted() { return .needsAccess }
         if let until = settings.pausedUntil, until > Date() { return .paused(until: until) }
         if Self.screenLocked { return .locked }
         if Self.idleSeconds > idleAfter { return .idle }
         return .recording
     }
+
+    // Windows are still recorded without Accessibility; only Return and
+    // shortcuts need it.
+    private func shouldRecord() -> Bool { status == .recording || status == .needsAccess }
 
     // Key monitors only deliver once the app is trusted, so they're
     // (re)installed when trust is granted.
@@ -70,199 +83,138 @@ final class Recorder {
         trusted = now
         monitors.forEach(NSEvent.removeMonitor)
         monitors = []
-        if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in self?.clicked() }) { monitors.append(m) }
         if let m = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown], handler: { [weak self] e in self?.keyDown(e) }) { monitors.append(m) }
-        Log.info("accessibility \(now ? "granted" : "not granted"); monitors installed")
+        Log.info("accessibility \(now ? "granted" : "not granted"); key monitor installed")
     }
 
-    private func shouldRecord() -> Bool { status == .recording }
+    // MARK: The window in front
 
-    // MARK: Window polling
+    private struct Front {
+        let app: AppInfo
+        let window: WindowList.Window
+        let url: String?
+    }
+
+    /// The frontmost app's front window, if it may be recorded right now.
+    /// Browsers are asked over AppleScript whether the window is private,
+    /// as its title doesn't say (`PrivacyRules.allowsBrowser`).
+    private func allowedFront() -> Front? {
+        guard let running = NSWorkspace.shared.frontmostApplication,
+              running.bundleIdentifier != Bundle.main.bundleIdentifier else { return nil }
+        let app = AppInfo(running)
+        let rules = settings.rules
+        if rules.isExcludedApp(app.bundleID) { return nil }
+        guard let window = WindowList.front(of: app.pid) else { return nil }
+        if Privacy.isBrowser(app.bundleID) {
+            let script = Privacy.isChromium(app.bundleID) ? frontBrowserWindow(app.bundleID) : nil
+            guard rules.allowsBrowser(bundleID: app.bundleID, windowListTitle: window.title, script: script) else { return nil }
+            return Front(app: app, window: window, url: script?.url)
+        }
+        guard rules.allows(bundleID: app.bundleID, windowTitle: window.title, url: nil) else { return nil }
+        return Front(app: app, window: window, url: nil)
+    }
+
+    // MARK: Polling
 
     private func tick() {
         refreshTrust()
-        guard shouldRecord(), let app = NSWorkspace.shared.frontmostApplication,
-              app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
-        let info = AppInfo(app)
-        let rules = settings.rules
-        if rules.isExcludedApp(info.bundleID) { skip(); return }
-        ax.async { [self] in poll(info, rules) }
-    }
+        guard shouldRecord(), !capturing, let running = NSWorkspace.shared.frontmostApplication,
+              running.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        let app = AppInfo(running)
+        if settings.rules.isExcludedApp(app.bundleID) { skip(); return }
+        guard let window = WindowList.front(of: app.pid) else { return }
 
-    private func skip() {
-        ax.async { [self] in
-            suppressed += 1
-            lastKey = nil
-            pendingKey = nil
-        }
-        frontURL = nil
-    }
-
-    private func poll(_ app: AppInfo, _ rules: PrivacyRules) {
-        let appEl = AXUIElementCreateApplication(app.pid)
-        AXUIElementSetMessagingTimeout(appEl, 0.5)
-        ensureWeb(app, appEl)
-        guard let win = appEl.element(kAXFocusedWindowAttribute) else { return }
-        let title = win.string(kAXTitleAttribute)
-        // Private windows are ruled out on the title, before any text is read.
-        guard rules.allows(bundleID: app.bundleID, windowTitle: title, url: nil) else {
-            suppressed += 1
-            lastKey = nil
-            DispatchQueue.main.async { self.frontURL = nil }
-            return
-        }
-        // Keep the focused field's contents fresh for when Return sends it.
-        // Typing triggers a read too, but dictated or pasted text (Voice
-        // Type) arrives without keystrokes.
-        readTyped()
-        let key = "\(app.bundleID)|\(win.windowID)|\(title ?? "")"
+        // Cheap: from the window list, no AppleScript or capture yet.
+        let key = "\(app.bundleID)|\(window.id)|\(window.title ?? "")"
         let now = Date()
         let changed = key != lastKey
+        let lookAgain = lookAgainAt.map { now >= $0 } ?? false
         if changed {
             // Wait for the same window on two ticks in a row, so loading
             // titles and windows flicked past don't count.
             guard key == pendingKey else { pendingKey = key; return }
-        } else if now.timeIntervalSince(lastSnapshot) < snapshotEvery || Self.idleSeconds > snapshotEvery {
+        } else if !lookAgain, now.timeIntervalSince(lastSnapshot) < snapshotEvery || Self.idleSeconds > snapshotEvery {
             return
         }
+        lookAgainAt = nil
 
-        let (text, url) = readWindow(win, isBrowser: Privacy.isBrowser(app.bundleID))
-        lastWindow = (app.pid, win.windowID, url)
-        guard rules.allows(bundleID: app.bundleID, windowTitle: title, url: url) else {
+        guard let front = allowedFront(), front.window.id == window.id, front.window.title == window.title else {
             suppressed += 1
             lastKey = key
             lastLines = []
-            DispatchQueue.main.async { self.frontURL = nil }
+            frontURL = nil
             return
         }
-        DispatchQueue.main.async { self.frontURL = url.map { (app.bundleID, $0) } }
-        let lines = text.split(whereSeparator: \.isNewline).map(String.init)
+        frontURL = front.url.map { (front.app.bundleID, $0) }
         lastSnapshot = now
+        capturing = true
+        Task { [self] in
+            let lines = await ScreenReader.lines(windowID: window.id)
+            await MainActor.run { finish(front, key: key, changed: changed, lines: lines, at: now) }
+        }
+    }
+
+    private func finish(_ front: Front, key: String, changed: Bool, lines: [String]?, at: Date) {
+        capturing = false
+        guard let lines else { return }
+        // The same window must still be in front, under the same title and
+        // still allowed, or what was captured might be from a window that
+        // went private or got excluded while it was being read.
+        guard let again = allowedFront(), again.app.pid == front.app.pid, again.window.id == front.window.id,
+              again.window.title == front.window.title else {
+            suppressed += 1
+            Log.info("dropped a capture: the window changed while it was read")
+            return
+        }
+        var text = Privacy.redactScreenText(lines.joined(separator: "\n"))
+        if text.count > maxText { text = String(text.prefix(maxText)) }
+        let shown = text.split(whereSeparator: \.isNewline).map(String.init)
+        let title = front.window.title.map(Privacy.redactScreenText)
         if changed {
             lastKey = key
-            lastLines = Set(lines)
-            store.append(RecordedEvent(kind: .windowChanged, at: now, app: app.name, bundleID: app.bundleID, windowTitle: title, url: url, text: text.isEmpty ? nil : text))
+            lastLines = Set(shown)
+            store.append(RecordedEvent(kind: .windowChanged, at: at, app: front.app.name, bundleID: front.app.bundleID,
+                                       windowTitle: title, url: front.url, text: text.isEmpty ? nil : text))
         } else {
-            let fresh = lines.filter { !lastLines.contains($0) }
-            lastLines = Set(lines)
+            let fresh = shown.filter { !lastLines.contains($0) }
+            lastLines = Set(shown)
             guard !fresh.isEmpty else { return }
-            store.append(RecordedEvent(kind: .snapshot, at: now, app: app.name, bundleID: app.bundleID, windowTitle: title, url: url, text: fresh.joined(separator: "\n")))
+            store.append(RecordedEvent(kind: .snapshot, at: at, app: front.app.name, bundleID: front.app.bundleID,
+                                       windowTitle: title, url: front.url, text: fresh.joined(separator: "\n")))
         }
     }
 
-    // Chromium and Electron only build their accessibility tree for web
-    // content when they think assistive tech is listening. AXManualAccessibility
-    // asks for it without AXEnhancedUserInterface's window-animation side
-    // effects; Chrome itself needs the latter.
-    private func ensureWeb(_ app: AppInfo, _ appEl: AXUIElement) {
-        guard !webTurnedOn.contains(app.pid) else { return }
-        webTurnedOn.insert(app.pid)
-        let manual = appEl.set("AXManualAccessibility", kCFBooleanTrue)
-        if manual != .success, Privacy.isBrowser(app.bundleID) {
-            appEl.set("AXEnhancedUserInterface", kCFBooleanTrue)
-        }
+    private func skip() {
+        suppressed += 1
+        lastKey = nil
+        pendingKey = nil
+        frontURL = nil
     }
 
-    /// The window's visible words, as Mitts reads them, and the page URL for
-    /// browsers. Secure fields are skipped and secrets masked.
-    private func readWindow(_ win: AXUIElement, isBrowser: Bool) -> (String, String?) {
-        var out: [String] = []
-        var size = 0
-        var visited = 0
-        var url: String?
-        let started = Date()
-        func walk(_ el: AXUIElement, _ depth: Int) {
-            visited += 1
-            guard visited < 6_000, depth < 100, size < maxText, Date().timeIntervalSince(started) < 0.8 else { return }
-            let v = el.values([kAXRoleAttribute, kAXSubroleAttribute, kAXValueAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXChildrenAttribute])
-            let role = v[kAXRoleAttribute] as? String ?? ""
-            var text: String?
-            switch role {
-            case "AXWebArea":
-                if url == nil, let u = el.attr("AXURL") { url = (u as? URL)?.absoluteString ?? (u as? String) }
-            case "AXStaticText":
-                text = v[kAXValueAttribute] as? String
-            case "AXHeading":
-                if let t = (v[kAXTitleAttribute] as? String) ?? (v[kAXDescriptionAttribute] as? String), !t.isEmpty {
-                    text = "## " + t
-                }
-            case "AXTextField", "AXTextArea", "AXComboBox":
-                text = Privacy.safeValue(v[kAXValueAttribute] as? String, role: role, subrole: v[kAXSubroleAttribute] as? String,
-                                         labels: [v[kAXTitleAttribute] as? String, v[kAXDescriptionAttribute] as? String, el.string(kAXPlaceholderValueAttribute)])
-            case "AXSecureTextField", "AXScrollBar", "AXMenuBar", "AXMenu":
-                return
-            default: break
+    // MARK: Browsers
+
+    /// The browser's front window over AppleScript: its mode (normal or
+    /// incognito), title and URL. Nil when it can't be asked, which leaves
+    /// the window out. The first time, macOS asks Mike to let Recall It
+    /// control the browser.
+    private func frontBrowserWindow(_ bundleID: String) -> BrowserWindow? {
+        let source = """
+        tell application id "\(bundleID)"
+            with timeout of 2 seconds
+                set w to front window
+                return {mode of w, title of w, URL of active tab of w}
+            end timeout
+        end tell
+        """
+        var error: NSDictionary?
+        guard let result = NSAppleScript(source: source)?.executeAndReturnError(&error), result.numberOfItems == 3 else {
+            if !loggedScriptError.contains(bundleID) {
+                loggedScriptError.insert(bundleID)
+                Log.info("can't ask \(bundleID) about its window, so it isn't recorded: \(error?[NSAppleScript.errorMessage] ?? "no answer")")
             }
-            if let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty, out.last != t {
-                out.append(t)
-                size += t.count + 1
-            }
-            for k in v[kAXChildrenAttribute] as? [AXUIElement] ?? [] { walk(k, depth + 1) }
-        }
-        walk(win, 0)
-        if isBrowser, url == nil { url = findURL(win) }
-        let text = Privacy.redactSecrets(out.joined(separator: "\n"))
-        return (text.count > maxText ? String(text.prefix(maxText)) : text, url)
-    }
-
-    // When the text walk ran out of budget before the page.
-    private func findURL(_ win: AXUIElement) -> String? {
-        var queue = [win]
-        var seen = 0
-        while !queue.isEmpty, seen < 400 {
-            let el = queue.removeFirst()
-            seen += 1
-            let v = el.values([kAXRoleAttribute, kAXChildrenAttribute])
-            if v[kAXRoleAttribute] as? String == "AXWebArea", let u = el.attr("AXURL") {
-                return (u as? URL)?.absoluteString ?? (u as? String)
-            }
-            queue.append(contentsOf: v[kAXChildrenAttribute] as? [AXUIElement] ?? [])
-        }
-        return nil
-    }
-
-    // MARK: Clicks
-
-    private func clicked() {
-        guard shouldRecord(), Date().timeIntervalSince(lastClick) > 0.25 else { return }
-        lastClick = Date()
-        let loc = NSEvent.mouseLocation
-        // AX uses top-left coordinates from the primary display.
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        let point = CGPoint(x: loc.x, y: primaryHeight - loc.y)
-        let rules = settings.rules
-        let at = Date()
-        ax.async { [self] in
-            let system = AXUIElementCreateSystemWide()
-            AXUIElementSetMessagingTimeout(system, 0.5)
-            var hit: AXUIElement?
-            guard AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit) == .success, let el = hit,
-                  let app = AppInfo(pid: el.pid), app.bundleID != Bundle.main.bundleIdentifier else { return }
-            guard let context = allowedContext(of: el, app, rules) else { return }
-            let v = el.values([kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute])
-            let role = v[kAXRoleAttribute] as? String
-            var title = v[kAXTitleAttribute] as? String
-            // Static text, links and cells carry their label as the value.
-            // Text fields don't get theirs recorded on a click.
-            if (title ?? "").isEmpty, let role, ["AXStaticText", "AXLink", "AXCell", "AXMenuItem", "AXButton"].contains(role) {
-                title = (v[kAXValueAttribute] as? String).map { String($0.prefix(200)) }
-            }
-            let target = Target(role: role, subrole: v[kAXSubroleAttribute] as? String, title: title.map(Privacy.redactSecrets),
-                                description: (v[kAXDescriptionAttribute] as? String).map(Privacy.redactSecrets))
-            store.append(RecordedEvent(kind: .click, at: at, app: app.name, bundleID: app.bundleID, windowTitle: context.title, url: context.url, target: target))
-        }
-    }
-
-    /// The window an element sits in, if it may be recorded.
-    private func allowedContext(of el: AXUIElement, _ app: AppInfo, _ rules: PrivacyRules) -> (title: String?, url: String?)? {
-        let win = el.element(kAXWindowAttribute) ?? AXUIElementCreateApplication(app.pid).element(kAXFocusedWindowAttribute)
-        let title = win?.string(kAXTitleAttribute)
-        let url = (win.map { w in lastWindow.flatMap { $0.pid == app.pid && $0.windowID == w.windowID ? $0.url : nil } }) ?? nil
-        guard rules.allows(bundleID: app.bundleID, windowTitle: title, url: url) else {
-            suppressed += 1
             return nil
         }
-        return (title, url)
+        return BrowserWindow(mode: result.atIndex(1)?.stringValue, title: result.atIndex(2)?.stringValue, url: result.atIndex(3)?.stringValue)
     }
 
     // MARK: Keys
@@ -272,76 +224,18 @@ final class Recorder {
         let mods = e.modifierFlags.intersection([.command, .control, .option, .shift])
         let isReturn = e.keyCode == 36 || e.keyCode == 76
         if isReturn && !mods.contains(.shift) && !mods.contains(.option) {
-            submitted(at: Date())
+            record(.submit, keys: nil)
+            // What was sent shows in the window a moment later.
+            lookAgainAt = Date().addingTimeInterval(1.5)
         } else if mods.contains(.command) || mods.contains(.control) {
-            shortcut(Self.describe(e, mods), at: Date())
-        } else {
-            // Typing: read the field a moment after Mike stops, so its
-            // contents are known when Return sends and clears it.
-            typingRead?.cancel()
-            let work = DispatchWorkItem { [weak self] in self?.ax.async { self?.readTyped() } }
-            typingRead = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+            record(.shortcut, keys: Self.describe(e, mods))
         }
     }
 
-    private func focusedElement() -> AXUIElement? {
-        let system = AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(system, 0.5)
-        return system.element(kAXFocusedUIElementAttribute)
-    }
-
-    private func readTyped() {
-        guard let el = focusedElement() else { return }
-        let v = el.values([kAXRoleAttribute, kAXSubroleAttribute, kAXValueAttribute])
-        guard v[kAXSubroleAttribute] as? String != "AXSecureTextField", let value = v[kAXValueAttribute] as? String else { return }
-        // An emptied field (just sent) mustn't overwrite what it held a
-        // moment ago, or Return would find nothing to record.
-        if value.isEmpty, let t = typed, CFEqual(t.element, el) { return }
-        typed = (el, value, Date())
-    }
-
-    private func submitted(at: Date) {
-        typingRead?.cancel()
-        let rules = settings.rules
-        ax.async { [self] in
-            guard let el = focusedElement(), let app = AppInfo(pid: el.pid), app.bundleID != Bundle.main.bundleIdentifier,
-                  let context = allowedContext(of: el, app, rules) else { typed = nil; return }
-            let v = el.values([kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute])
-            let role = v[kAXRoleAttribute] as? String, subrole = v[kAXSubroleAttribute] as? String
-            let title = v[kAXTitleAttribute] as? String, desc = v[kAXDescriptionAttribute] as? String
-            let placeholder = el.string(kAXPlaceholderValueAttribute)
-            // Chat boxes clear on Return before we get to look, so prefer what
-            // the field held a moment ago, if it's the same field.
-            var value = v[kAXValueAttribute] as? String
-            if let t = typed, CFEqual(t.element, el), at.timeIntervalSince(t.at) < 120, !t.value.isEmpty { value = t.value }
-            typed = nil
-            let safe = Privacy.safeValue(value, role: role, subrole: subrole, labels: [title, desc, placeholder]).map { String($0.prefix(4_000)) }
-            let target = Target(role: role, subrole: subrole, title: title, description: desc, placeholder: placeholder, value: safe)
-            store.append(RecordedEvent(kind: .submit, at: at, app: app.name, bundleID: app.bundleID, windowTitle: context.title, url: context.url, target: target))
-        }
-    }
-
-    private func shortcut(_ keys: String, at: Date) {
-        let rules = settings.rules
-        ax.async { [self] in
-            guard let front = NSWorkspace.shared.frontmostApplication, let app = AppInfo(pid: front.processIdentifier),
-                  app.bundleID != Bundle.main.bundleIdentifier, !rules.isExcludedApp(app.bundleID) else { return }
-            let el = focusedElement()
-            let context: (title: String?, url: String?)
-            if let el {
-                guard let allowed = allowedContext(of: el, app, rules) else { return }
-                context = allowed
-            } else {
-                // No focused element means no window title to check, which
-                // for a browser could be a private window.
-                guard !Privacy.isBrowser(app.bundleID) else { return }
-                context = (nil, nil)
-            }
-            let v = el?.values([kAXRoleAttribute, kAXTitleAttribute, kAXDescriptionAttribute]) ?? [:]
-            let target = Target(role: v[kAXRoleAttribute] as? String, title: v[kAXTitleAttribute] as? String, description: v[kAXDescriptionAttribute] as? String)
-            store.append(RecordedEvent(kind: .shortcut, at: at, app: app.name, bundleID: app.bundleID, windowTitle: context.title, url: context.url, target: target, keys: keys))
-        }
+    private func record(_ kind: RecordedEvent.Kind, keys: String?) {
+        guard let front = allowedFront() else { return }
+        store.append(RecordedEvent(kind: kind, at: Date(), app: front.app.name, bundleID: front.app.bundleID,
+                                   windowTitle: front.window.title.map(Privacy.redactScreenText), url: front.url, keys: keys))
     }
 
     static func describe(_ e: NSEvent, _ mods: NSEvent.ModifierFlags) -> String {
@@ -365,6 +259,75 @@ final class Recorder {
     static var screenLocked: Bool {
         guard let dict = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
         return (dict["CGSSessionScreenIsLocked"] as? Bool) ?? false
+    }
+}
+
+/// Windows as the window server lists them, front to back. Titles need
+/// Screen Recording access; without it they're nil.
+enum WindowList {
+    struct Window: Equatable {
+        let id: CGWindowID
+        let title: String?
+    }
+
+    /// The app's frontmost ordinary window: on screen, at the normal level,
+    /// and big enough to be a window rather than a tooltip or a badge.
+    static func front(of pid: pid_t) -> Window? {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        for info in list {
+            guard info[kCGWindowOwnerPID as String] as? pid_t == pid,
+                  info[kCGWindowLayer as String] as? Int == 0,
+                  (info[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  let bounds = info[kCGWindowBounds as String] as? [String: Double],
+                  (bounds["Width"] ?? 0) >= 160, (bounds["Height"] ?? 0) >= 100,
+                  let id = info[kCGWindowNumber as String] as? CGWindowID else { continue }
+            let title = (info[kCGWindowName as String] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            return Window(id: id, title: title)
+        }
+        return nil
+    }
+}
+
+/// Takes one window's picture and reads the text on it, on the Mac. The
+/// image stays in memory and is gone when this returns.
+enum ScreenReader {
+    /// The longest side of the picture, in pixels: plenty for reading text,
+    /// and it keeps a big window's recognition well under a second.
+    static let maxSide = 3_000.0
+
+    static func lines(windowID: CGWindowID) async -> [String]? {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+            guard let window = content.windows.first(where: { $0.windowID == windowID }) else { return nil }
+            let filter = SCContentFilter(desktopIndependentWindow: window)
+            let config = SCStreamConfiguration()
+            let scale = Double(filter.pointPixelScale)
+            let size = window.frame.size
+            let shrink = min(1, maxSide / (max(size.width, size.height) * scale))
+            config.width = max(1, Int(size.width * scale * shrink))
+            config.height = max(1, Int(size.height * scale * shrink))
+            config.showsCursor = false
+            config.ignoreShadowsSingleWindow = true
+            let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+            return try recognize(image)
+        } catch {
+            Log.info("couldn't read window \(windowID): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private static func recognize(_ image: CGImage) throws -> [String] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        let pieces = (request.results ?? []).compactMap { o -> RecallItCore.RecognizedText? in
+            guard let text = o.topCandidates(1).first?.string else { return nil }
+            // Vision's boxes are 0...1 from the bottom left.
+            let b = o.boundingBox
+            return RecallItCore.RecognizedText(text: text, x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
+        }
+        return ScreenText.lines(pieces)
     }
 }
 

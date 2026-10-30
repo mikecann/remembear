@@ -12,7 +12,10 @@ public struct PrivacyRules: Equatable, Sendable {
     public static let alwaysExcludedApps: Set<String> = [
         "com.1password.1password", "com.agilebits.onepassword7", "com.agilebits.onepassword-osx",
         "com.apple.keychainaccess", "com.apple.Passwords", "com.bitwarden.desktop",
-        "com.lastpass.LastPass", "com.dashlane.dashlanephonefinal",
+        "com.lastpass.LastPass", "com.dashlane.dashlanephonefinal", "org.keepassxc.keepassxc",
+        "me.proton.pass.electron", "com.yubico.yubioath", "com.yubico.authenticator",
+        // macOS's own password and Touch ID prompts, when they come to the front.
+        "com.apple.SecurityAgent", "com.apple.LocalAuthentication.UIAgent", "com.apple.coreservices.uiagent",
         // The lock screen and screen saver.
         "com.apple.loginwindow", "com.apple.ScreenSaver.Engine",
     ]
@@ -47,6 +50,37 @@ public struct PrivacyRules: Equatable, Sendable {
     }
 }
 
+/// What a browser said over AppleScript about its front window.
+public struct BrowserWindow: Equatable, Sendable {
+    /// Chromium's window mode: "normal" or "incognito".
+    public var mode: String?
+    public var title: String?
+    public var url: String?
+
+    public init(mode: String?, title: String?, url: String?) {
+        self.mode = mode
+        self.title = title
+        self.url = url
+    }
+}
+
+extension PrivacyRules {
+    /// Whether a browser's front window may be recorded, when its title came
+    /// from the window list rather than the Accessibility API. The window
+    /// list only has the page's title: a Chrome incognito window showing
+    /// "New Incognito tab" said nothing else (checked 30 Oct 2026). So only
+    /// Chromium browsers that answer AppleScript can be recorded, and only
+    /// when the front window's mode is "normal" and its title matches the
+    /// window list's, so both describe the same window. Safari and Firefox
+    /// can't say whether a window is private, so nothing from them is kept.
+    public func allowsBrowser(bundleID: String, windowListTitle: String?, script: BrowserWindow?) -> Bool {
+        guard Privacy.isChromium(bundleID), let script, script.mode == "normal" else { return false }
+        guard let listed = windowListTitle?.trimmingCharacters(in: .whitespaces), !listed.isEmpty,
+              script.title?.trimmingCharacters(in: .whitespaces) == listed else { return false }
+        return allows(bundleID: bundleID, windowTitle: listed, url: script.url)
+    }
+}
+
 public enum Privacy {
     private static let browserIDs: Set<String> = [
         "com.apple.Safari", "com.apple.SafariTechnologyPreview",
@@ -59,7 +93,10 @@ public enum Privacy {
     private static let chromiumHints = ["chrome", "chromium", "brave", "edgemac", "thebrowser", "helium", "vivaldi", "opera"]
 
     public static func isBrowser(_ bundleID: String) -> Bool {
-        if browserIDs.contains(bundleID) { return true }
+        browserIDs.contains(bundleID) || isChromium(bundleID)
+    }
+
+    public static func isChromium(_ bundleID: String) -> Bool {
         let id = bundleID.lowercased()
         return chromiumHints.contains { id.contains($0) }
     }
@@ -104,7 +141,7 @@ public enum Privacy {
     // Well-known token shapes, long unbroken runs of key-like characters, and
     // card-number-like digit runs.
     private static let secretValue = try! NSRegularExpression(
-        pattern: #"\b(sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|[A-Za-z0-9+_-]{32,})\b|\b\d(?:[ -]?\d){12,18}\b"#)
+        pattern: #"\b(sk-[A-Za-z0-9_-]{16,}|[sr]k_(?:live|test)_[A-Za-z0-9]{10,}|AIza[0-9A-Za-z_-]{30,}|ya29\.[0-9A-Za-z_-]{20,}|glpat-[0-9A-Za-z_-]{16,}|npm_[A-Za-z0-9]{30,}|hf_[A-Za-z0-9]{30,}|xapp-[A-Za-z0-9-]{10,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|[A-Za-z0-9+_-]{32,})\b|\b\d(?:[ -]?\d){12,18}\b"#)
 
     /// Masks API keys, tokens and card numbers inside text. Long runs are only
     /// masked when they mix upper case, lower case and digits, so git hashes,
@@ -123,7 +160,8 @@ public enum Privacy {
     }
 
     private static func isSecretLooking(_ s: String) -> Bool {
-        let known = ["sk-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "xoxa-", "xoxb-", "xoxp-", "xoxr-", "AKIA", "eyJ"]
+        let known = ["sk-", "sk_live_", "sk_test_", "rk_live_", "rk_test_", "AIza", "ya29.", "glpat-", "npm_", "hf_", "xapp-",
+                     "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "xoxa-", "xoxb-", "xoxp-", "xoxr-", "AKIA", "eyJ"]
         if known.contains(where: s.hasPrefix) { return true }
         let digitsOnly = s.allSatisfy { $0.isNumber || $0 == " " || $0 == "-" }
         if digitsOnly { return true }
@@ -132,5 +170,62 @@ public enum Privacy {
         return s.split(whereSeparator: { $0 == "-" || $0 == "_" }).contains { piece in
             piece.count >= 24 && piece.contains(where: \.isUppercase) && piece.contains(where: \.isLowercase) && piece.contains(where: \.isNumber)
         }
+    }
+
+    // MARK: Text read off the screen
+
+    // Environment variables: FOO_BAR=value anywhere on a line (a shell, a
+    // .env file, a command), and FOO_BAR: value or "FOO_BAR": value at the
+    // start of one (YAML, JSON, a dashboard's list).
+    private static let envAssignment = try! NSRegularExpression(pattern: #"\b([A-Z][A-Z0-9]*_[A-Z0-9_]+)=("[^"\n]*"|'[^'\n]*'|[^\s]+)"#)
+    private static let envKeyValue = try! NSRegularExpression(
+        pattern: #"^(\s*["']?[A-Z][A-Z0-9]*_[A-Z0-9_]+["']?\s*:\s*)(\S.*)$"#, options: .anchorsMatchLines)
+    // A dashboard's table read as a row: the name, a gap, then the value.
+    private static let envTableRow = try! NSRegularExpression(
+        pattern: #"^(\s*[A-Z][A-Z0-9]*_[A-Z0-9_]+(?:\s{2,}|\t))(\S.*)$"#, options: .anchorsMatchLines)
+    // Anything labelled like a secret: "password: hunter2", api_key = "…".
+    private static let labelledSecret = try! NSRegularExpression(
+        pattern: #"(?i)\b(pass(?:word|wd|code|phrase)?|pwd|secret|client[_ -]?secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key|auth[_ -]?key)(["']?\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[^\s,;]+)"#)
+    private static let urlCredentials = try! NSRegularExpression(pattern: #"(\b[a-z][a-z0-9+.-]*://[^\s:/@]+:)[^\s@/]+@"#, options: .caseInsensitive)
+    private static let authHeader = try! NSRegularExpression(pattern: #"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}"#)
+    // Convex deploy keys, e.g. "prod:happy-animal-123|eyJ...".
+    private static let deployKey = try! NSRegularExpression(pattern: #"\b(?:prod|dev|preview|project):[A-Za-z0-9-]+\|[A-Za-z0-9+/=_-]{16,}"#)
+    private static let privateKeyBlock = try! NSRegularExpression(
+        pattern: #"-{3,}\s*BEGIN[A-Z ]*PRIVATE KEY\s*-{3,}[\s\S]*?(?:-{3,}\s*END[A-Z ]*PRIVATE KEY\s*-{3,}|$)"#)
+
+    /// Text read off a screenshot, with secrets masked: environment variable
+    /// values (all of them, not only the ones that look secret), anything
+    /// labelled as a password, token or key, credentials in URLs and auth
+    /// headers, private key blocks and long base64 lines, then the token
+    /// shapes `redactSecrets` knows. A screenshot sees everything on screen,
+    /// so this errs towards masking too much.
+    public static func redactScreenText(_ text: String) -> String {
+        var t = replace(privateKeyBlock, in: text, with: "[redacted private key]")
+        t = replace(deployKey, in: t, with: "[redacted]")
+        t = replace(urlCredentials, in: t, with: "$1[redacted]@")
+        t = replace(authHeader, in: t, with: "$1 [redacted]")
+        t = replace(envAssignment, in: t, with: "$1=[redacted]")
+        t = replace(envKeyValue, in: t, with: "$1[redacted]")
+        t = replace(envTableRow, in: t, with: "$1[redacted]")
+        t = replace(labelledSecret, in: t, with: "$1$2[redacted]")
+        t = t.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            isBase64Line(line) ? "[redacted]" : String(line)
+        }.joined(separator: "\n")
+        return redactSecrets(t)
+    }
+
+    private static func replace(_ re: NSRegularExpression, in text: String, with template: String) -> String {
+        re.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: template)
+            .replacingOccurrences(of: "[redacted][redacted]", with: "[redacted]")
+    }
+
+    // A line of nothing but base64, as in a key or certificate body. Hex
+    // (git hashes) has no upper case, so it's left alone.
+    private static func isBase64Line<S: StringProtocol>(_ line: S) -> Bool {
+        let s = line.trimmingCharacters(in: .whitespaces)
+        guard s.count >= 40, s != "[redacted]" else { return false }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "+/="))
+        guard s.unicodeScalars.allSatisfy({ allowed.contains($0) && $0.isASCII }) else { return false }
+        return s.contains(where: \.isUppercase) && s.contains(where: \.isLowercase) && s.contains(where: \.isNumber)
     }
 }
