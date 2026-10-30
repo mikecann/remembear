@@ -39,6 +39,10 @@ final class Recorder {
     /// shows in the window.
     private var lookAgainAt: Date?
     private var capturing = false
+    /// The last capture's fingerprint, for the window `lastKey` names. A
+    /// reread that matches it is dropped before any text is read.
+    private var lastFingerprint: [UInt8]?
+    private(set) var unchangedSkips = 0
     private var loggedScriptError = Set<String>()
 
     /// Read on the main thread for the menu.
@@ -152,15 +156,28 @@ final class Recorder {
         // user-initiated priority, and Vision's accurate recognition then
         // spread over the performance cores (296% CPU while Mike was working,
         // 30 Oct 2026). History can wait a moment; Mike's apps can't.
+        // A new window is always read. A reread of the same one only is if
+        // it looks different from last time.
+        let previous = changed ? nil : lastFingerprint
         Task(priority: .background) { [self] in
-            let read = await ScreenReader.read(windowID: window.id)
+            let read = await ScreenReader.read(windowID: window.id, unlessSameAs: previous)
             await MainActor.run { finish(front, key: key, changed: changed, read: read, at: now) }
         }
     }
 
-    private func finish(_ front: Front, key: String, changed: Bool, read: (lines: [String], image: CGImage)?, at: Date) {
+    private func finish(_ front: Front, key: String, changed: Bool, read: ScreenReader.Result?, at: Date) {
         capturing = false
-        guard let (lines, image) = read else { return }
+        guard let read else { return }
+        let lines: [String], image: CGImage
+        switch read {
+        case .unchanged:
+            unchangedSkips += 1
+            return
+        case .read(let l, let i, let fingerprint):
+            lines = l
+            image = i
+            lastFingerprint = fingerprint
+        }
         // The same window must still be in front, under the same title and
         // still allowed, or what was captured might be from a window that
         // went private or got excluded while it was being read.
@@ -315,9 +332,15 @@ enum ScreenReader {
     /// and it keeps a big window's recognition well under a second.
     static let maxSide = 3_000.0
 
-    /// The window's text lines, and its picture for the embedder, which
-    /// keeps it in memory only.
-    static func read(windowID: CGWindowID) async -> (lines: [String], image: CGImage)? {
+    enum Result {
+        /// Looked the same as `unlessSameAs`, so no text was read.
+        case unchanged
+        /// The window's text lines, its picture for the embedder (kept in
+        /// memory only) and its fingerprint for next time.
+        case read(lines: [String], image: CGImage, fingerprint: [UInt8])
+    }
+
+    static func read(windowID: CGWindowID, unlessSameAs previous: [UInt8]?) async -> Result? {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
             guard let window = content.windows.first(where: { $0.windowID == windowID }) else { return nil }
@@ -331,17 +354,37 @@ enum ScreenReader {
             config.showsCursor = false
             config.ignoreShadowsSingleWindow = true
             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-            return (try recognize(image), image)
+            let fingerprint = Self.fingerprint(image)
+            if let fingerprint, Fingerprint.isSame(previous, fingerprint) { return .unchanged }
+            return .read(lines: try recognize(image), image: image, fingerprint: fingerprint ?? [])
         } catch {
             Log.info("couldn't read window \(windowID): \(error.localizedDescription)")
             return nil
         }
     }
 
+    /// The picture shrunk to a small grey square (`Fingerprint.side`).
+    static func fingerprint(_ image: CGImage) -> [UInt8]? {
+        let side = Fingerprint.side
+        var pixels = [UInt8](repeating: 0, count: side * side)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let ctx = CGContext(data: buffer.baseAddress, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side,
+                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+            ctx.interpolationQuality = .low
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return true
+        }
+        return drawn ? pixels : nil
+    }
+
     private static func recognize(_ image: CGImage) throws -> [String] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
+        // English only: guessing the language on every read costs time, and
+        // Mike's screens are English.
+        request.automaticallyDetectsLanguage = false
+        request.recognitionLanguages = ["en-US"]
         try VNImageRequestHandler(cgImage: image).perform([request])
         let pieces = (request.results ?? []).compactMap { o -> RememBearCore.RecognizedText? in
             guard let text = o.topCandidates(1).first?.string else { return nil }
