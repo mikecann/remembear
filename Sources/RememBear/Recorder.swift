@@ -149,14 +149,14 @@ final class Recorder {
         lastSnapshot = now
         capturing = true
         Task { [self] in
-            let lines = await ScreenReader.lines(windowID: window.id)
-            await MainActor.run { finish(front, key: key, changed: changed, lines: lines, at: now) }
+            let read = await ScreenReader.read(windowID: window.id)
+            await MainActor.run { finish(front, key: key, changed: changed, read: read, at: now) }
         }
     }
 
-    private func finish(_ front: Front, key: String, changed: Bool, lines: [String]?, at: Date) {
+    private func finish(_ front: Front, key: String, changed: Bool, read: (lines: [String], image: CGImage)?, at: Date) {
         capturing = false
-        guard let lines else { return }
+        guard let (lines, image) = read else { return }
         // The same window must still be in front, under the same title and
         // still allowed, or what was captured might be from a window that
         // went private or got excluded while it was being read.
@@ -189,6 +189,14 @@ final class Recorder {
             guard !fresh.isEmpty else { return }
             store.append(RecordedEvent(kind: .snapshot, at: at, app: front.app.name, bundleID: front.app.bundleID,
                                        windowTitle: title, url: front.url, text: fresh.joined(separator: "\n")))
+        }
+        // Only what was recorded gets a vector, after the same privacy
+        // checks, so search never holds anything the events wouldn't.
+        let shot = (app: front.app.name, bundleID: front.app.bundleID, title: title, url: front.url, excerpt: ScreenSearch.excerpt(of: text))
+        Task.detached(priority: .utility) {
+            guard let vector = await Embedder.shared.embed(image: image) else { return }
+            ShotStore.shared.add(ScreenSearch.Shot(at: at, app: shot.app, bundleID: shot.bundleID, title: shot.title,
+                                                   url: shot.url, excerpt: shot.excerpt, vector: vector))
         }
     }
 
@@ -297,13 +305,15 @@ enum WindowList {
 }
 
 /// Takes one window's picture and reads the text on it, on the Mac. The
-/// image stays in memory and is gone when this returns.
+/// image stays in memory: it's read here, embedded for search, then gone.
 enum ScreenReader {
     /// The longest side of the picture, in pixels: plenty for reading text,
     /// and it keeps a big window's recognition well under a second.
     static let maxSide = 3_000.0
 
-    static func lines(windowID: CGWindowID) async -> [String]? {
+    /// The window's text lines, and its picture for the embedder, which
+    /// keeps it in memory only.
+    static func read(windowID: CGWindowID) async -> (lines: [String], image: CGImage)? {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
             guard let window = content.windows.first(where: { $0.windowID == windowID }) else { return nil }
@@ -317,7 +327,7 @@ enum ScreenReader {
             config.showsCursor = false
             config.ignoreShadowsSingleWindow = true
             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-            return try recognize(image)
+            return (try recognize(image), image)
         } catch {
             Log.info("couldn't read window \(windowID): \(error.localizedDescription)")
             return nil

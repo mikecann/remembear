@@ -1,0 +1,6 @@
+[project]
+name = "remembear-embedder"
+version = "0.1.0"
+description = "EmbeddingGemma 2 on this Mac, for RememBear's screenshot search"
+requires-python = ">=3.11"
+dependencies = ["sentence-transformers[image]>=6.1", "torch>=2.6", "pillow>=11"]

@@ -37,6 +37,10 @@ trap 'rm -rf "$STAGE_ROOT"' EXIT
 STAGE="$STAGE_ROOT/RememBear.app"
 mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources"
 cp "$BIN_DIR/remembear" "$STAGE/Contents/MacOS/remembear"
+# The screenshot-search embedder ships inside the app; its Python packages
+# live in the data folder (uv sync below), outside the signed bundle.
+mkdir -p "$STAGE/Contents/Resources/embedder"
+cp "$ROOT/embedder/server.py" "$ROOT/embedder/pyproject.toml" "$ROOT/embedder/uv.lock" "$STAGE/Contents/Resources/embedder/"
 ICON_KEY=''
 if [[ -f "$ROOT/icons/remembear.png" ]]; then
   mkdir -p "$STAGE_ROOT/icon.iconset"
@@ -83,6 +87,19 @@ stop_app
 mkdir -p "$(dirname "$APP")"
 if [[ -d "$APP" ]]; then rm -rf "$APP"; fi
 mv "$STAGE" "$APP"
+# EmbeddingGemma 2 for screenshot search, run on this Mac. The model itself
+# (about 1.5 GB) downloads from Hugging Face the first time it starts.
+SUPPORT="$HOME/Library/Application Support/RememBear"
+if command -v uv >/dev/null; then
+  mkdir -p "$SUPPORT"
+  UV_PROJECT_ENVIRONMENT="$SUPPORT/embedder-venv" uv sync --quiet --frozen --project "$ROOT/embedder" \
+    || echo "Couldn't set up the embedder; screenshot search stays off." >&2
+else
+  echo "uv isn't installed, so screenshot search stays off (https://docs.astral.sh/uv/)." >&2
+fi
+# `remembear search …` from a shell.
+mkdir -p "$HOME/.local/bin"
+ln -sf "$APP/Contents/MacOS/remembear" "$HOME/.local/bin/remembear"
 if [[ "${REMEMBEAR_OPEN:-1}" != 0 ]]; then open "$APP"; fi
 echo "Installed $APP"
 echo "Log: tail -f ~/Library/Logs/remembear.log"

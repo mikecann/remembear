@@ -16,6 +16,19 @@ It records no audio and doesn't log keystrokes. It stops when I'm away for 5 min
 
 Until 30 Oct 2026 it read windows through the Accessibility API instead, and asked what was under every click. That made every app it read do the work itself: Threadbear took half a second to switch views, and Chrome and Electron apps had to keep their accessibility trees built. A screenshot comes from the window server and costs the app nothing.
 
+## Searching what was on screen
+
+Each capture that gets recorded is also turned into a vector by [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2), Google's open multimodal embedding model, running on this Mac's GPU. So a question in words finds the moments that looked like it, pictures and charts included, not just the summaries' text:
+
+```bash
+remembear search "the convex usage chart" [--limit 10] [--days 7] [--json]
+```
+
+- The screenshot goes to the embedder in memory, over 127.0.0.1 with a token, and is never written down. The model runs here, so nothing leaves the Mac.
+- Only captures that passed every privacy check above get a vector, so search never holds anything the events wouldn't.
+- `search.sqlite` keeps the vector, the time, app, window title, URL and the first 400 characters of the masked text, for 30 days. Forget the Last Hour clears it too.
+- The embedder (`embedder/server.py`) starts when there's something to embed, takes about 7 s to load and holds about 3 GB while loaded, so it quits after 10 idle minutes. `restart.sh` sets up its Python packages with `uv`; the model (about 1.5 GB) downloads from Hugging Face the first time.
+
 ## What it never records
 
 - **Private browser windows.** The window list only has a page's title, and an incognito window's title doesn't say it's incognito, so RememBear asks Chrome (and other Chromium browsers) over AppleScript whether the front window is normal or incognito, and records nothing unless it's normal. Safari and Firefox can't say, so nothing from them is recorded at all.

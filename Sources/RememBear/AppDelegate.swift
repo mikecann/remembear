@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try? SMAppService.mainApp.register()
             settings.defaults.set(true, forKey: "didRegisterLogin")
         }
+        ShotStore.shared.prune()
         recorder.start()
         summarizer.start()
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -198,12 +199,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func forgetHour() {
         let alert = NSAlert()
         alert.messageText = "Forget the last hour?"
-        alert.informativeText = "Deletes the recorded activity and summaries from the last hour, here and in Agent Archive."
+        alert.informativeText = "Deletes the recorded activity, search entries and summaries from the last hour, here and in Agent Archive."
         alert.addButton(withTitle: "Forget")
         alert.addButton(withTitle: "Cancel")
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         summarizer.forget(last: 3600)
+        ShotStore.shared.prune(since: Date().addingTimeInterval(-3600))
     }
 
     @objc private func openFolder() { NSWorkspace.shared.open(Paths.summaries) }
