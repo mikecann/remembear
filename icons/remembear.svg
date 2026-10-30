@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- The same cub as ComputerCub and BrowserBear, on the macOS icon grid, with a
+       clock whose arrow runs backwards: a bear that remembers what you did. -->
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="#F4EFE6"/>
+  <g fill="#2B2722">
+    <circle cx="322" cy="352" r="92"/>
+    <circle cx="672" cy="352" r="92"/>
+    <circle cx="497" cy="545" r="246"/>
+  </g>
+  <g fill="#F4EFE6">
+    <circle cx="322" cy="352" r="44"/>
+    <circle cx="672" cy="352" r="44"/>
+    <circle cx="414" cy="508" r="27"/>
+    <circle cx="580" cy="508" r="27"/>
+    <ellipse cx="497" cy="618" rx="104" ry="80"/>
+  </g>
+  <g fill="#2B2722">
+    <ellipse cx="497" cy="588" rx="40" ry="28"/>
+    <path d="M497 612 Q497 650 462 656 M497 612 Q497 650 532 656" fill="none" stroke="#2B2722" stroke-width="12" stroke-linecap="round"/>
+  </g>
+  <!-- The clock, tucked against the cub's cheek like ComputerCub's pointer. Its rim
+       is an arrow running anticlockwise, back in time. -->
+  <g transform="translate(724 724)">
+    <circle r="140" fill="#F4EFE6"/>
+    <path d="M-104 -60 A120 120 0 1 1 -104 60" fill="none" stroke="#2B2722" stroke-width="24" stroke-linecap="round"/>
+    <path d="M-127 -21 L-72 -47 L-131 -81 Z" fill="#2B2722" stroke="#2B2722" stroke-width="10" stroke-linejoin="round"/>
+    <path d="M6 -60 L6 6 L52 34" fill="none" stroke="#2B2722" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
