@@ -154,6 +154,11 @@ final class Embedder {
     /// The screenshot as a JPEG in memory, shrunk to the embedder's 768
     /// pixels so less goes over the loopback. Never written to disk.
     static func jpeg(_ image: CGImage, maxSide: Int = 768) -> Data? {
+        // Drain the encoder's buffers now, as in ScreenReader.read.
+        autoreleasepool { encodeJPEG(image, maxSide: maxSide) }
+    }
+
+    private static func encodeJPEG(_ image: CGImage, maxSide: Int) -> Data? {
         let scale = min(1, Double(maxSide) / Double(max(image.width, image.height)))
         let w = max(1, Int(Double(image.width) * scale)), h = max(1, Int(Double(image.height) * scale))
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,

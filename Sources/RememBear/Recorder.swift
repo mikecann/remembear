@@ -354,9 +354,15 @@ enum ScreenReader {
             config.showsCursor = false
             config.ignoreShadowsSingleWindow = true
             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-            let fingerprint = Self.fingerprint(image)
-            if let fingerprint, Fingerprint.isSame(previous, fingerprint) { return .unchanged }
-            return .read(lines: try recognize(image), image: image, fingerprint: fingerprint ?? [])
+            // Drained here rather than whenever the concurrency thread next
+            // does: Vision and Core Graphics hand out autoreleased screen
+            // buffers, and after a day 294 of them (4.2 GB reserved, though
+            // purgeable) had piled up (31 Oct 2026).
+            return try autoreleasepool { () throws -> Result in
+                let fingerprint = Self.fingerprint(image)
+                if let fingerprint, Fingerprint.isSame(previous, fingerprint) { return .unchanged }
+                return .read(lines: try recognize(image), image: image, fingerprint: fingerprint ?? [])
+            }
         } catch {
             Log.info("couldn't read window \(windowID): \(error.localizedDescription)")
             return nil
