@@ -192,7 +192,13 @@ final class Recorder {
         // be any shape, and masking only knows the common ones.
         if Privacy.looksLikeKeyBeingShown(raw) || Privacy.looksLikeKeyBeingShown(front.window.title ?? "") {
             suppressed += 1
-            Log.info("skipped a window that looked like it was showing a key")
+            // Remember this window was looked at, or every 2 s tick reads it
+            // again from scratch (254 times by 3 Nov 2026). The next look is
+            // the once-a-minute reread, which the fingerprint then skips
+            // unless the window changes.
+            if changed { Log.info("skipped a window that looked like it was showing a key") }
+            lastKey = key
+            lastLines = []
             return
         }
         var text = Privacy.redactScreenText(raw)
