@@ -14,11 +14,12 @@ RememBear is a native macOS 14+ menu bar app, part of Mikerosoft, that replaces 
 - The `claude` call must keep `--tools ""`, `--strict-mcp-config`, `--setting-sources ""` and `--no-session-persistence`: no tools, no hooks or CLAUDE.md, and no transcript that would turn up in Agent Archive as a thread.
 - Always use `restart.sh` to rebuild and relaunch. Keep `app.mikecann.remembear` and its designated requirement stable so the Accessibility grant survives rebuilds.
 - Raw events stay 48 hours. Summaries are never deleted except by "Forget the Last Hour".
+- Sentry (org `mikec`, project `remembear`) gets fixed messages only (`Problem` in `Health.swift`): never a title, app, URL, screen text or summary. Only a Release build at ~/Applications reports (`Reporter.enabled`), through a small HTTP call rather than an SDK. sentry-watch triages what arrives.
 - No em dashes in copy.
 
 ## Code layout
 
-- `Sources/RememBearCore`: `Event.swift` (event model, JSONL), `Privacy.swift` (rules, browser checks, secret masking for screen text), `ScreenText.swift` (recognised text to lines), `ScreenSearch.swift` (vectors, ranking, the search command's arguments), `Setup.swift` (permission states), `TimeWindow.swift` (UTC windows, file names), `Digest.swift` (events to compact prompt text, deduped and budgeted), `Prompts.swift`, `SummaryFile.swift` (parse the reply, render Markdown), `Schedule.swift` (what's due), `CaptureWatchdog.swift` (a stuck window read can't stop recording), `Settings.swift`.
+- `Sources/RememBearCore`: `Event.swift` (event model, JSONL), `Privacy.swift` (rules, browser checks, secret masking for screen text), `ScreenText.swift` (recognised text to lines), `ScreenSearch.swift` (vectors, ranking, the search command's arguments), `Setup.swift` (permission states), `TimeWindow.swift` (UTC windows, file names), `Digest.swift` (events to compact prompt text, deduped and budgeted), `Prompts.swift`, `SummaryFile.swift` (parse the reply, render Markdown), `Schedule.swift` (what's due), `CaptureWatchdog.swift` (a stuck window read can't stop recording), `Health.swift` (noticing recording has gone quiet, and the Sentry report), `Settings.swift`.
 - `Sources/RememBear`: `AppDelegate.swift` (menu), `Recorder.swift` (window polling every 2 s from the window list, window capture with ScreenCaptureKit and text recognition with Vision, browser checks over AppleScript, Return and shortcuts), `EventStore.swift`, `Summarizer.swift` (passes every minute, `claude -p`), `Support.swift` (paths, log), `Search.swift` (the embedder client, `ShotStore` over search.sqlite, `remembear search`), `SetupWindow.swift` (permissions).
 - `~/Library/Application Support/RememBear/{events,summaries,claude-cwd}`, `~/Library/Logs/remembear.log`.
 

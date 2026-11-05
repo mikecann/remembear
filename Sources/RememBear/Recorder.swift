@@ -42,6 +42,8 @@ final class Recorder {
     /// Vision call can't stop recording.
     private var watchdog = CaptureWatchdog()
     private var loggedStuck = false
+    /// Notices recording going quiet for a reason nobody has thought of yet.
+    private var health = RecordingHealth()
     /// The last capture's fingerprint, for the window `lastKey` names. A
     /// reread that matches it is dropped before any text is read.
     private var lastFingerprint: [UInt8]?
@@ -131,15 +133,18 @@ final class Recorder {
             // Noted first, so a relaunch that doesn't take can't be retried
             // for an hour; this copy goes on recording without text meanwhile.
             settings.lastWatchdogRelaunch = Date()
-            if Relaunch.now() { return }
+            if Relaunch.now() { return }  // the new copy reports .relaunched
             Log.info("couldn't relaunch; recording windows without their text")
             reader = .stuck
         }
         if reader == .stuck, !loggedStuck {
             loggedStuck = true
             Log.info("a window read is taking over \(Int(watchdog.slow))s; recording windows without their text until it's back")
+            Reporter.report(.readStuck)
         }
-        guard shouldRecord(), reader != .reading, let running = NSWorkspace.shared.frontmostApplication,
+        let uptime = ProcessInfo.processInfo.systemUptime
+        if let problem = health.check(uptime: uptime) { Reporter.report(problem) }
+        guard shouldRecord(), let running = NSWorkspace.shared.frontmostApplication,
               running.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
         let app = AppInfo(running)
         if settings.rules.isExcludedApp(app.bundleID) { skip(); return }
@@ -154,13 +159,19 @@ final class Recorder {
             // Wait for the same window on two ticks in a row, so loading
             // titles and windows flicked past don't count.
             guard key == pendingKey else { pendingKey = key; return }
+            // Counted only once it has held for two ticks, as a title that
+            // changes every second (a timer, a spinner) never settles.
+            health.noteFront(key, uptime: uptime)
         } else if !lookAgain, now.timeIntervalSince(lastSnapshot) < snapshotEvery || Self.idleSeconds > snapshotEvery {
             return
         }
+        // One read at a time; a change seen meanwhile is picked up after.
+        guard reader != .reading else { return }
         lookAgainAt = nil
 
         guard let front = allowedFront(), front.window.id == window.id, front.window.title == window.title else {
             suppressed += 1
+            settled()
             lastKey = key
             lastLines = []
             frontURL = nil
@@ -199,6 +210,7 @@ final class Recorder {
     /// was. The window has passed `allowedFront`, and a title that looks
     /// like a key is left out as it would be with text.
     private func recordWithoutText(_ front: Front, key: String, at: Date) {
+        settled()
         lastKey = key
         lastLines = []
         // The fingerprint was another window's; the first read after the
@@ -217,6 +229,7 @@ final class Recorder {
         let lines: [String], image: CGImage
         switch read {
         case .unchanged:
+            settled()
             unchangedSkips += 1
             return
         case .read(let l, let i, let fingerprint):
@@ -242,11 +255,13 @@ final class Recorder {
             // again from scratch (254 times by 3 Nov 2026). The next look is
             // the once-a-minute reread, which the fingerprint then skips
             // unless the window changes.
+            settled()
             if changed { Log.info("skipped a window that looked like it was showing a key") }
             lastKey = key
             lastLines = []
             return
         }
+        settled()
         var text = Privacy.redactScreenText(raw)
         if text.count > maxText { text = String(text.prefix(maxText)) }
         let shown = text.split(whereSeparator: \.isNewline).map(String.init)
@@ -273,8 +288,12 @@ final class Recorder {
         }
     }
 
+    /// The front window was recorded or deliberately left out.
+    private func settled() { health.settled(uptime: ProcessInfo.processInfo.systemUptime) }
+
     private func skip() {
         suppressed += 1
+        settled()
         lastKey = nil
         pendingKey = nil
         frontURL = nil

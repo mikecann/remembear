@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Paths.ensure()
-        Log.info("started \(Bundle.main.bundleIdentifier ?? "?") pid \(getpid())")
+        Log.info("started \(Bundle.main.bundleIdentifier ?? "?") pid \(getpid()); problems \(Reporter.enabled ? "go" : "don't go") to Sentry")
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         let menu = NSMenu()
         menu.delegate = self
@@ -33,6 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             try? SMAppService.mainApp.register()
             settings.defaults.set(true, forKey: "didRegisterLogin")
         }
+        // A stuck read made the last copy relaunch into this one: say so
+        // now, as the last copy quit before a report could go.
+        if let last = settings.lastWatchdogRelaunch, Date().timeIntervalSince(last) < 120 { Reporter.report(.relaunched) }
         ShotStore.shared.prune()
         recorder.start()
         summarizer.start()

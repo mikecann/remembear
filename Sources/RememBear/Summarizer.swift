@@ -120,6 +120,8 @@ final class Summarizer {
             retryAfter[window] = Date().addingTimeInterval(Schedule.retryDelay(attempt: n))
             lastError = "\(error)"
             Log.info("failed \(window) (attempt \(n + 1), \(detail)): \(error)")
+            // Only the fact goes to Sentry: the error can quote the summary.
+            if n + 1 == 3 { Reporter.report(.summaryFailing) }
             return nil
         }
     }
