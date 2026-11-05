@@ -42,6 +42,9 @@ public struct CaptureWatchdog: Sendable {
         self.relaunchAtMostEvery = relaunchAtMostEvery
     }
 
+    /// A read is running, on time or not.
+    public var busy: Bool { startedAt != nil }
+
     /// Call when a read starts; pass the token back to `finish`.
     public mutating func begin(uptime: TimeInterval) -> Int {
         token += 1

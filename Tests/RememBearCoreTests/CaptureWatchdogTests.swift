@@ -8,9 +8,12 @@ final class CaptureWatchdogTests: XCTestCase {
 
     func testAReadThatFinishesInTimeIsKept() {
         var w = CaptureWatchdog()
+        XCTAssertFalse(w.busy)
         let token = w.begin(uptime: 100)
+        XCTAssertTrue(w.busy)
         XCTAssertEqual(w.check(uptime: 110, now: now, lastRelaunch: nil), .reading)
         XCTAssertTrue(w.finish(token, uptime: 112))
+        XCTAssertFalse(w.busy)
         XCTAssertEqual(w.check(uptime: 200, now: now, lastRelaunch: nil), .idle)
     }
 

@@ -35,7 +35,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         // A stuck read made the last copy relaunch into this one: say so
         // now, as the last copy quit before a report could go.
-        if let last = settings.lastWatchdogRelaunch, Date().timeIntervalSince(last) < 120 { Reporter.report(.relaunched) }
+        if settings.defaults.bool(forKey: "relaunchToReport") {
+            settings.defaults.removeObject(forKey: "relaunchToReport")
+            Reporter.report(.relaunched)
+        }
         ShotStore.shared.prune()
         recorder.start()
         summarizer.start()

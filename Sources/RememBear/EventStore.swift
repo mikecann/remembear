@@ -8,10 +8,19 @@ final class EventStore {
     private var handle: FileHandle?
     private var handleWindow: TimeWindow?
 
-    func append(_ event: RecordedEvent) {
+    /// `written` runs on the main thread with whether the line reached the
+    /// file, so the health check only counts what really landed.
+    func append(_ event: RecordedEvent, written: ((Bool) -> Void)? = nil) {
         queue.async { [self] in
+            let ok = write(event)
+            if let written { DispatchQueue.main.async { written(ok) } }
+        }
+    }
+
+    private func write(_ event: RecordedEvent) -> Bool {
+        do {
             let window = TimeWindow.containing(event.at, .tenMinutes)
-            guard var line = try? encoder.encode(event) else { return }
+            guard var line = try? encoder.encode(event) else { return false }
             line.append(UInt8(ascii: "\n"))
             if handleWindow != window {
                 try? handle?.close()
@@ -21,10 +30,18 @@ final class EventStore {
                     FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600])
                 }
                 handle = try? FileHandle(forWritingTo: url)
-                handle?.seekToEndOfFile()
+                _ = try? handle?.seekToEnd()
                 handleWindow = window
             }
-            handle?.write(line)
+            guard let handle else { handleWindow = nil; return false }
+            try handle.write(contentsOf: line)
+            return true
+        } catch {
+            // Opened again next time, in case the file went away.
+            try? handle?.close()
+            handle = nil
+            handleWindow = nil
+            return false
         }
     }
 

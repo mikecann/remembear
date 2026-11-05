@@ -77,7 +77,7 @@ enum Relaunch {
         p.arguments = ["-c", """
             for i in 1 2 3; do sleep 1; /usr/bin/open "$0" && exit 0; sleep 4; done
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) relaunch: open failed three times" >> "$1"
-            [ -n "$2" ] && printf %s "$4" | /usr/bin/curl -s --max-time 15 -o /dev/null -H "Content-Type: application/x-sentry-envelope" -H "X-Sentry-Auth: $3" --data-binary @- "$2"
+            [ -n "$2" ] && printf %s "$4" | /usr/bin/curl -q -s --max-time 15 -o /dev/null -H "Content-Type: application/x-sentry-envelope" -H "X-Sentry-Auth: $3" --data-binary @- "$2"
             exit 1
             """, path, Paths.log.path, report?.url.absoluteString ?? "", report?.auth ?? "",
                        report.map { String(decoding: $0.body, as: UTF8.self) } ?? ""]
@@ -112,15 +112,15 @@ enum Reporter {
     }
 
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var lastSent: [Problem: Date] = [:]
 
-    /// At most once an hour per kind of problem.
+    /// At most once an hour per kind of problem, across relaunches.
     static func report(_ problem: Problem) {
         Log.info("problem: \(problem.message)\(enabled ? "; reported to Sentry" : "")")
         guard enabled, let report = envelope(problem) else { return }
+        let key = "reported.\(problem.rawValue)"
         let due = lock.withLock { () -> Bool in
-            if let last = lastSent[problem], Date().timeIntervalSince(last) < 3600 { return false }
-            lastSent[problem] = Date()
+            if let last = UserDefaults.standard.object(forKey: key) as? Date, abs(Date().timeIntervalSince(last)) < 3600 { return false }
+            UserDefaults.standard.set(Date(), forKey: key)
             return true
         }
         guard due else { return }

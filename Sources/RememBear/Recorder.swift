@@ -133,7 +133,10 @@ final class Recorder {
             // Noted first, so a relaunch that doesn't take can't be retried
             // for an hour; this copy goes on recording without text meanwhile.
             settings.lastWatchdogRelaunch = Date()
-            if Relaunch.now() { return }  // the new copy reports .relaunched
+            // The new copy reports it, as this one quits before a report goes.
+            settings.defaults.set(true, forKey: "relaunchToReport")
+            if Relaunch.now() { return }
+            settings.defaults.removeObject(forKey: "relaunchToReport")
             Log.info("couldn't relaunch; recording windows without their text")
             reader = .stuck
         }
@@ -143,8 +146,10 @@ final class Recorder {
             Reporter.report(.readStuck)
         }
         let uptime = ProcessInfo.processInfo.systemUptime
+        // Paused, idle or locked isn't quiet: start the health clock afresh.
+        guard shouldRecord() else { health.settled(uptime: uptime); return }
         if let problem = health.check(uptime: uptime) { Reporter.report(problem) }
-        guard shouldRecord(), let running = NSWorkspace.shared.frontmostApplication,
+        guard let running = NSWorkspace.shared.frontmostApplication,
               running.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
         let app = AppInfo(running)
         if settings.rules.isExcludedApp(app.bundleID) { skip(); return }
@@ -210,7 +215,6 @@ final class Recorder {
     /// was. The window has passed `allowedFront`, and a title that looks
     /// like a key is left out as it would be with text.
     private func recordWithoutText(_ front: Front, key: String, at: Date) {
-        settled()
         lastKey = key
         lastLines = []
         // The fingerprint was another window's; the first read after the
@@ -221,7 +225,7 @@ final class Recorder {
         // site goes in: a token can be anywhere in the URL.
         store.append(RecordedEvent(kind: .windowChanged, at: at, app: front.app.name, bundleID: front.app.bundleID,
                                    windowTitle: front.window.title.map(Privacy.redactScreenText),
-                                   url: Privacy.siteOnly(front.url), text: nil))
+                                   url: Privacy.siteOnly(front.url), text: nil), written: settledIfWritten)
     }
 
     private func finish(_ front: Front, key: String, changed: Bool, read: ScreenReader.Result?, at: Date) {
@@ -261,7 +265,6 @@ final class Recorder {
             lastLines = []
             return
         }
-        settled()
         var text = Privacy.redactScreenText(raw)
         if text.count > maxText { text = String(text.prefix(maxText)) }
         let shown = text.split(whereSeparator: \.isNewline).map(String.init)
@@ -270,8 +273,9 @@ final class Recorder {
             lastKey = key
             lastLines = Set(shown)
             store.append(RecordedEvent(kind: .windowChanged, at: at, app: front.app.name, bundleID: front.app.bundleID,
-                                       windowTitle: title, url: front.url, text: text.isEmpty ? nil : text))
+                                       windowTitle: title, url: front.url, text: text.isEmpty ? nil : text), written: settledIfWritten)
         } else {
+            settled()
             let fresh = shown.filter { !lastLines.contains($0) }
             lastLines = Set(shown)
             guard !fresh.isEmpty else { return }
@@ -291,9 +295,14 @@ final class Recorder {
     /// The front window was recorded or deliberately left out.
     private func settled() { health.settled(uptime: ProcessInfo.processInfo.systemUptime) }
 
+    /// Recorded only counts once the event is on disk.
+    private func settledIfWritten(_ ok: Bool) { if ok { settled() } }
+
     private func skip() {
         suppressed += 1
-        settled()
+        // Not while a read is out: popping into Terminal every few minutes
+        // mustn't hide a read that never comes back.
+        if !watchdog.busy { settled() }
         lastKey = nil
         pendingKey = nil
         frontURL = nil
