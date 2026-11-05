@@ -52,6 +52,13 @@ public final class Settings: @unchecked Sendable {
         set { defaults.set(newValue, forKey: "pausedUntil") }
     }
 
+    /// When a stuck window read last made the app relaunch, so it does at
+    /// most once an hour (`CaptureWatchdog`).
+    public var lastWatchdogRelaunch: Date? {
+        get { defaults.object(forKey: "lastWatchdogRelaunch") as? Date }
+        set { defaults.set(newValue, forKey: "lastWatchdogRelaunch") }
+    }
+
     public func isPaused(at now: Date = Date()) -> Bool {
         guard let until = pausedUntil else { return false }
         return until > now

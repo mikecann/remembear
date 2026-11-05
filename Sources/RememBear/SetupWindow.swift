@@ -86,14 +86,7 @@ final class SetupModel: ObservableObject {
 
     /// Opens a new copy once this one has quit, so a Screen Recording grant
     /// takes.
-    func restart() {
-        let path = Bundle.main.bundlePath
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", path]
-        try? p.run()
-        NSApp.terminate(nil)
-    }
+    func restart() { Relaunch.now() }
 }
 
 struct SetupView: View {

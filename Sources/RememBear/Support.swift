@@ -52,3 +52,15 @@ enum Log {
         }
     }
 }
+
+/// Quits and opens a new copy once this one has gone: for a Screen
+/// Recording grant to take, or when Vision has wedged (`CaptureWatchdog`).
+enum Relaunch {
+    static func now() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", Bundle.main.bundlePath]
+        try? p.run()
+        NSApp.terminate(nil)
+    }
+}

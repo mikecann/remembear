@@ -38,7 +38,10 @@ final class Recorder {
     /// Return was pressed: look again a moment later, when what was sent
     /// shows in the window.
     private var lookAgainAt: Date?
-    private var capturing = false
+    /// Notices a read that hasn't come back (3 Nov 2026), so one stuck
+    /// Vision call can't stop recording.
+    private var watchdog = CaptureWatchdog()
+    private var loggedStuck = false
     /// The last capture's fingerprint, for the window `lastKey` names. A
     /// reread that matches it is dropped before any text is read.
     private var lastFingerprint: [UInt8]?
@@ -122,7 +125,19 @@ final class Recorder {
 
     private func tick() {
         refreshTrust()
-        guard shouldRecord(), !capturing, let running = NSWorkspace.shared.frontmostApplication,
+        let reader = watchdog.check(at: Date(), lastRelaunch: settings.lastWatchdogRelaunch)
+        if reader == .relaunch {
+            Log.info("a window read has been stuck for over \(Int(watchdog.relaunchAfter / 60)) minutes; relaunching")
+            settings.lastWatchdogRelaunch = Date()
+            timer?.invalidate()
+            Relaunch.now()
+            return
+        }
+        if reader == .stuck, !loggedStuck {
+            loggedStuck = true
+            Log.info("a window read is taking over \(Int(watchdog.slow))s; recording windows without their text until it's back")
+        }
+        guard shouldRecord(), reader != .reading, let running = NSWorkspace.shared.frontmostApplication,
               running.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
         let app = AppInfo(running)
         if settings.rules.isExcludedApp(app.bundleID) { skip(); return }
@@ -151,7 +166,11 @@ final class Recorder {
         }
         frontURL = front.url.map { (front.app.bundleID, $0) }
         lastSnapshot = now
-        capturing = true
+        if reader == .stuck {
+            if changed { recordWithoutText(front, key: key, at: now) }
+            return
+        }
+        let token = watchdog.begin(at: now)
         // Background priority: a plain Task here inherits the main thread's
         // user-initiated priority, and Vision's accurate recognition then
         // spread over the performance cores (296% CPU while Mike was working,
@@ -161,12 +180,31 @@ final class Recorder {
         let previous = changed ? nil : lastFingerprint
         Task(priority: .background) { [self] in
             let read = await ScreenReader.read(windowID: window.id, unlessSameAs: previous)
-            await MainActor.run { finish(front, key: key, changed: changed, read: read, at: now) }
+            await MainActor.run {
+                // An overdue read is dropped: windows went on being recorded
+                // without text meanwhile, so lastKey has moved on.
+                guard watchdog.finish(token, at: Date()) else {
+                    Log.info("a slow window read came back; dropped what it read")
+                    loggedStuck = false
+                    return
+                }
+                finish(front, key: key, changed: changed, read: read, at: now)
+            }
         }
     }
 
+    /// While a read is stuck: the app, title and URL still say where Mike
+    /// was. The window has passed `allowedFront`, and a title that looks
+    /// like a key is left out as it would be with text.
+    private func recordWithoutText(_ front: Front, key: String, at: Date) {
+        lastKey = key
+        lastLines = []
+        if Privacy.looksLikeKeyBeingShown(front.window.title ?? "") { suppressed += 1; return }
+        store.append(RecordedEvent(kind: .windowChanged, at: at, app: front.app.name, bundleID: front.app.bundleID,
+                                   windowTitle: front.window.title.map(Privacy.redactScreenText), url: front.url, text: nil))
+    }
+
     private func finish(_ front: Front, key: String, changed: Bool, read: ScreenReader.Result?, at: Date) {
-        capturing = false
         guard let read else { return }
         let lines: [String], image: CGImage
         switch read {
