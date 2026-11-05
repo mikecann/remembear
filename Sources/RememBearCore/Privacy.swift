@@ -267,16 +267,16 @@ public enum Privacy {
     /// Screen text that reads like a key being shown: "Copy your new API
     /// key now. You won't be able to see it again." The whole capture is
     /// dropped, rather than trusting masking to find the key in it.
-    /// Scheme, host and path only: no query, fragment or login. For a
-    /// window recorded without its text, where the page couldn't be checked
-    /// for a key, so a token in the URL would otherwise go in unseen.
-    public static func urlWithoutQuery(_ url: String?) -> String? {
-        guard let url, var c = URLComponents(string: url), c.scheme != nil, c.host != nil else { return nil }
-        c.query = nil
-        c.fragment = nil
-        c.user = nil
-        c.password = nil
-        return c.string
+    /// The site only (scheme, host and port). For a window recorded without
+    /// its text, where the page couldn't be checked for a key: a token can
+    /// sit in the query or in the path (`/redeem/sk-...`).
+    public static func siteOnly(_ url: String?) -> String? {
+        guard let url, let c = URLComponents(string: url), let scheme = c.scheme, let host = c.host, !host.isEmpty else { return nil }
+        var site = URLComponents()
+        site.scheme = scheme
+        site.host = host
+        site.port = c.port
+        return site.string
     }
 
     public static func looksLikeKeyBeingShown(_ text: String) -> Bool {

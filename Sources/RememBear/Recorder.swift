@@ -205,11 +205,11 @@ final class Recorder {
         // stuck one is back must read this window from scratch.
         lastFingerprint = nil
         if Privacy.looksLikeKeyBeingShown(front.window.title ?? "") { suppressed += 1; return }
-        // No text means the page couldn't be checked for a key, so the URL
-        // goes in without its query, where a token would be.
+        // No text means the page couldn't be checked for a key, so only the
+        // site goes in: a token can be anywhere in the URL.
         store.append(RecordedEvent(kind: .windowChanged, at: at, app: front.app.name, bundleID: front.app.bundleID,
                                    windowTitle: front.window.title.map(Privacy.redactScreenText),
-                                   url: Privacy.urlWithoutQuery(front.url), text: nil))
+                                   url: Privacy.siteOnly(front.url), text: nil))
     }
 
     private func finish(_ front: Front, key: String, changed: Bool, read: ScreenReader.Result?, at: Date) {

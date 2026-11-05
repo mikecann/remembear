@@ -55,17 +55,25 @@ enum Log {
 
 /// Quits and opens a new copy once this one has gone: for a Screen
 /// Recording grant to take, or when a window read is stuck
-/// (`CaptureWatchdog`). False, and nothing quits, if the helper that opens
-/// the new copy can't start.
+/// (`CaptureWatchdog`). False, and nothing quits, if the app can't be
+/// opened again or the helper that opens it can't start.
 enum Relaunch {
     @discardableResult
     static func now() -> Bool {
+        let path = Bundle.main.bundlePath
+        // Once this copy quits nothing records, so make sure there's an app
+        // to open first (it may have been moved or deleted since launch).
+        guard let exe = Bundle.main.executablePath, FileManager.default.isExecutableFile(atPath: exe) else {
+            Log.info("can't relaunch: the app isn't at \(path) any more")
+            return false
+        }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        // If `open` fails the old copy is gone, so the failure is logged
-        // where Mike would look.
-        p.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\" || echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) relaunch: open failed\" >> \"$1\"",
-                       Bundle.main.bundlePath, Paths.log.path]
+        // `open` gets three goes; if all fail, it says so in the log.
+        p.arguments = ["-c", """
+            for i in 1 2 3; do sleep 1; /usr/bin/open "$0" && exit 0; sleep 4; done
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) relaunch: open failed three times" >> "$1"
+            """, path, Paths.log.path]
         do { try p.run() } catch {
             Log.info("couldn't start the relaunch helper: \(error.localizedDescription)")
             return false
