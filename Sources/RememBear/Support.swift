@@ -54,13 +54,23 @@ enum Log {
 }
 
 /// Quits and opens a new copy once this one has gone: for a Screen
-/// Recording grant to take, or when Vision has wedged (`CaptureWatchdog`).
+/// Recording grant to take, or when a window read is stuck
+/// (`CaptureWatchdog`). False, and nothing quits, if the helper that opens
+/// the new copy can't start.
 enum Relaunch {
-    static func now() {
+    @discardableResult
+    static func now() -> Bool {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", Bundle.main.bundlePath]
-        try? p.run()
+        // If `open` fails the old copy is gone, so the failure is logged
+        // where Mike would look.
+        p.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\" || echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) relaunch: open failed\" >> \"$1\"",
+                       Bundle.main.bundlePath, Paths.log.path]
+        do { try p.run() } catch {
+            Log.info("couldn't start the relaunch helper: \(error.localizedDescription)")
+            return false
+        }
         NSApp.terminate(nil)
+        return true
     }
 }

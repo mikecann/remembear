@@ -64,3 +64,14 @@ final class PrivacyTests: XCTestCase {
         XCTAssertEqual(Privacy.redactSecrets(slug), slug)
     }
 }
+
+final class URLWithoutQueryTests: XCTestCase {
+    // Used where the page couldn't be read to check it isn't showing a key.
+    func testQueryAndFragmentGo() {
+        XCTAssertEqual(Privacy.urlWithoutQuery("https://example.com/result?token=hunter2#k=1"), "https://example.com/result")
+        XCTAssertEqual(Privacy.urlWithoutQuery("https://me:pw@example.com/a"), "https://example.com/a")
+        XCTAssertEqual(Privacy.urlWithoutQuery("https://x.com/home"), "https://x.com/home")
+        XCTAssertNil(Privacy.urlWithoutQuery(nil))
+        XCTAssertNil(Privacy.urlWithoutQuery("not a url at all ?secret"))
+    }
+}

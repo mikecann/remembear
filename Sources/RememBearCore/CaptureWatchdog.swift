@@ -29,7 +29,12 @@ public struct CaptureWatchdog: Sendable {
     public let relaunchAfter: TimeInterval
     public let relaunchAtMostEvery: TimeInterval
     private var token = 0
-    private var startedAt: Date?
+    /// System uptime when the read began: it stands still while the Mac
+    /// sleeps, so a read across a sleep doesn't look stuck, and it can't be
+    /// set back like the wall clock.
+    private var startedAt: TimeInterval?
+    /// Once a read has been treated as stuck, its result stays stale.
+    private var overdue = false
 
     public init(slow: TimeInterval = 30, relaunchAfter: TimeInterval = 600, relaunchAtMostEvery: TimeInterval = 3600) {
         self.slow = slow
@@ -38,24 +43,27 @@ public struct CaptureWatchdog: Sendable {
     }
 
     /// Call when a read starts; pass the token back to `finish`.
-    public mutating func begin(at now: Date) -> Int {
+    public mutating func begin(uptime: TimeInterval) -> Int {
         token += 1
-        startedAt = now
+        startedAt = uptime
+        overdue = false
         return token
     }
 
     /// Call when a read returns. False means it came back overdue (or isn't
     /// the current read), so what it read must be thrown away.
-    public mutating func finish(_ t: Int, at now: Date) -> Bool {
+    public mutating func finish(_ t: Int, uptime: TimeInterval) -> Bool {
         guard t == token, let startedAt else { return false }
         self.startedAt = nil
-        return now.timeIntervalSince(startedAt) <= slow
+        return !overdue && uptime - startedAt <= slow
     }
 
-    public func check(at now: Date, lastRelaunch: Date?) -> State {
+    /// `now` is the wall clock, only for spacing relaunches across launches.
+    public mutating func check(uptime: TimeInterval, now: Date, lastRelaunch: Date?) -> State {
         guard let startedAt else { return .idle }
-        let running = now.timeIntervalSince(startedAt)
-        if running <= slow { return .reading }
+        let running = uptime - startedAt
+        if running <= slow, !overdue { return .reading }
+        overdue = true
         if running > relaunchAfter, lastRelaunch.map({ now.timeIntervalSince($0) >= relaunchAtMostEvery }) ?? true {
             return .relaunch
         }

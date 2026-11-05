@@ -125,13 +125,15 @@ final class Recorder {
 
     private func tick() {
         refreshTrust()
-        let reader = watchdog.check(at: Date(), lastRelaunch: settings.lastWatchdogRelaunch)
+        var reader = watchdog.check(uptime: ProcessInfo.processInfo.systemUptime, now: Date(), lastRelaunch: settings.lastWatchdogRelaunch)
         if reader == .relaunch {
             Log.info("a window read has been stuck for over \(Int(watchdog.relaunchAfter / 60)) minutes; relaunching")
+            // Noted first, so a relaunch that doesn't take can't be retried
+            // for an hour; this copy goes on recording without text meanwhile.
             settings.lastWatchdogRelaunch = Date()
-            timer?.invalidate()
-            Relaunch.now()
-            return
+            if Relaunch.now() { return }
+            Log.info("couldn't relaunch; recording windows without their text")
+            reader = .stuck
         }
         if reader == .stuck, !loggedStuck {
             loggedStuck = true
@@ -170,7 +172,7 @@ final class Recorder {
             if changed { recordWithoutText(front, key: key, at: now) }
             return
         }
-        let token = watchdog.begin(at: now)
+        let token = watchdog.begin(uptime: ProcessInfo.processInfo.systemUptime)
         // Background priority: a plain Task here inherits the main thread's
         // user-initiated priority, and Vision's accurate recognition then
         // spread over the performance cores (296% CPU while Mike was working,
@@ -183,7 +185,7 @@ final class Recorder {
             await MainActor.run {
                 // An overdue read is dropped: windows went on being recorded
                 // without text meanwhile, so lastKey has moved on.
-                guard watchdog.finish(token, at: Date()) else {
+                guard watchdog.finish(token, uptime: ProcessInfo.processInfo.systemUptime) else {
                     Log.info("a slow window read came back; dropped what it read")
                     loggedStuck = false
                     return
@@ -193,15 +195,21 @@ final class Recorder {
         }
     }
 
-    /// While a read is stuck: the app, title and URL still say where Mike
+    /// While a read is stuck: the app, title and site still say where Mike
     /// was. The window has passed `allowedFront`, and a title that looks
     /// like a key is left out as it would be with text.
     private func recordWithoutText(_ front: Front, key: String, at: Date) {
         lastKey = key
         lastLines = []
+        // The fingerprint was another window's; the first read after the
+        // stuck one is back must read this window from scratch.
+        lastFingerprint = nil
         if Privacy.looksLikeKeyBeingShown(front.window.title ?? "") { suppressed += 1; return }
+        // No text means the page couldn't be checked for a key, so the URL
+        // goes in without its query, where a token would be.
         store.append(RecordedEvent(kind: .windowChanged, at: at, app: front.app.name, bundleID: front.app.bundleID,
-                                   windowTitle: front.window.title.map(Privacy.redactScreenText), url: front.url, text: nil))
+                                   windowTitle: front.window.title.map(Privacy.redactScreenText),
+                                   url: Privacy.urlWithoutQuery(front.url), text: nil))
     }
 
     private func finish(_ front: Front, key: String, changed: Bool, read: ScreenReader.Result?, at: Date) {
