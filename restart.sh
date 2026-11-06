@@ -100,6 +100,13 @@ fi
 # `remembear search …` from a shell.
 mkdir -p "$HOME/.local/bin"
 ln -sf "$APP/Contents/MacOS/remembear" "$HOME/.local/bin/remembear"
-if [[ "${REMEMBEAR_OPEN:-1}" != 0 ]]; then open "$APP"; fi
+# Without the agent's THREADBEAR_* variables: `open` hands the caller's
+# environment to the app, and the heavy-compute watchdog then blamed a day of
+# RememBear's CPU on whichever thread last ran this (6 Nov 2026).
+if [[ "${REMEMBEAR_OPEN:-1}" != 0 ]]; then
+  UNSET=()
+  for V in $(compgen -v THREADBEAR_ || true); do UNSET+=(-u "$V"); done
+  env ${UNSET[@]+"${UNSET[@]}"} open "$APP"
+fi
 echo "Installed $APP"
 echo "Log: tail -f ~/Library/Logs/remembear.log"
