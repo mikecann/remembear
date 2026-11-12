@@ -9,8 +9,14 @@ public enum Schedule {
     public static let sixHourGrace: TimeInterval = 10 * 60
     /// Raw events are deleted after this, like Codex's. Summaries are kept.
     public static let rawRetention: TimeInterval = 48 * 60 * 60
-    /// How far back to look for missing 6-hour rollups.
-    public static let sixHourLookback: TimeInterval = 3 * 24 * 60 * 60
+    /// A window that never got its summary keeps its events longer, so a
+    /// Claude login out of its weekly limit (12 Nov 2026: four days of
+    /// failures) delays summaries rather than losing them. A week covers any
+    /// weekly reset.
+    public static let unsummarizedRetention: TimeInterval = 7 * 24 * 60 * 60
+    /// How far back to look for missing 6-hour rollups: past the longest a
+    /// 10-minute summary can still turn up, so a late backlog still rolls up.
+    public static let sixHourLookback: TimeInterval = 8 * 24 * 60 * 60
 
     /// 10-minute windows with recorded events, closed for a moment, with no
     /// summary yet and not waiting out a retry, oldest first.
@@ -32,13 +38,14 @@ public enum Schedule {
             .sorted()
     }
 
-    /// Event segments old enough to delete.
-    public static func expired(_ segments: Set<TimeWindow>, now: Date) -> [TimeWindow] {
-        segments.filter { $0.end.addingTimeInterval(rawRetention) < now }.sorted()
+    /// Event segments old enough to delete: 48 hours once summarised, a week
+    /// if not.
+    public static func expired(_ segments: Set<TimeWindow>, summarized: Set<TimeWindow>, now: Date) -> [TimeWindow] {
+        segments.filter { $0.end.addingTimeInterval(summarized.contains($0) ? rawRetention : unsummarizedRetention) < now }.sorted()
     }
 
     /// 2, 10 and 30 minutes, then hourly. Claude being down or rate limited
-    /// for a while shouldn't lose a window; its events last 48 hours.
+    /// for a while shouldn't lose a window; its events wait a week for it.
     public static func retryDelay(attempt: Int) -> TimeInterval {
         let minutes: [Double] = [2, 10, 30]
         return attempt < minutes.count ? minutes[max(0, attempt)] * 60 : 60 * 60

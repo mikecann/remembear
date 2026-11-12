@@ -108,6 +108,7 @@ There's no settings window. Use `defaults write app.mikecann.remembear <key> <va
 | `sixHourModel` | `sonnet` | model for the 6-hour ones |
 | `claudePath` | `~/.local/bin/claude` | |
 | `claudeConfigDir` | unset (`~/.claude`) | which Claude login to use |
+| `claudeFallbackConfigDirs` | empty | other logins (CLAUDE_CONFIG_DIRs) to try, in order, when that one is out of usage |
 | `excludedApps`, `excludedSites` | empty | also editable from the menu |
 
 ## Your agents

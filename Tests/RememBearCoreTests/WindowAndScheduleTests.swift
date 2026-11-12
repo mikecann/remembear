@@ -54,8 +54,15 @@ final class WindowAndScheduleTests: XCTestCase {
 
     func testRawEventsExpireAfter48Hours() {
         let w = TimeWindow.containing(date("2026-10-27T06:00:00Z"), .tenMinutes)
-        XCTAssertEqual(Schedule.expired([w], now: date("2026-10-29T06:09:00Z")), [])
-        XCTAssertEqual(Schedule.expired([w], now: date("2026-10-29T06:11:00Z")), [w])
+        XCTAssertEqual(Schedule.expired([w], summarized: [w], now: date("2026-10-29T06:09:00Z")), [])
+        XCTAssertEqual(Schedule.expired([w], summarized: [w], now: date("2026-10-29T06:11:00Z")), [w])
+    }
+
+    func testUnsummarizedEventsWaitAWeek() {
+        let w = TimeWindow.containing(date("2026-10-27T06:00:00Z"), .tenMinutes)
+        XCTAssertEqual(Schedule.expired([w], summarized: [], now: date("2026-10-29T06:11:00Z")), [])
+        XCTAssertEqual(Schedule.expired([w], summarized: [], now: date("2026-11-03T06:09:00Z")), [])
+        XCTAssertEqual(Schedule.expired([w], summarized: [], now: date("2026-11-03T06:11:00Z")), [w])
     }
 
     func testSettingsDefaultsAndPause() {

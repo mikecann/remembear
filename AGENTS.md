@@ -13,7 +13,8 @@ RememBear is a native macOS 14+ menu bar app, part of Mikerosoft, that replaces 
 - Summary files must keep Codex's file name format and frontmatter (`title`, `description`, `applications` on single lines), because Agent Archive parses them (`shared/computerHistory.ts` in the agent-archive repo).
 - The `claude` call must keep `--tools ""`, `--strict-mcp-config`, `--setting-sources ""` and `--no-session-persistence`: no tools, no hooks or CLAUDE.md, and no transcript that would turn up in Agent Archive as a thread.
 - Always use `restart.sh` to rebuild and relaunch. Keep `app.mikecann.remembear` and its designated requirement stable so the Accessibility grant survives rebuilds.
-- Raw events stay 48 hours. Summaries are never deleted except by "Forget the Last Hour".
+- Raw events stay 48 hours once summarised, a week if not (so a login out of usage delays summaries instead of losing them). Summaries are never deleted except by "Forget the Last Hour".
+- Summaries run on the default Claude login, then the `claudeFallbackConfigDirs` defaults list (CLAUDE_CONFIG_DIRs, in order) when one says it has hit its limit. Personal logins only: never the Convex one (Token Stats `claude-2`).
 - Sentry (org `mikec`, project `remembear`) gets fixed messages only (`Problem` in `Health.swift`): never a title, app, URL, screen text or summary. Only a Release build at ~/Applications reports (`Reporter.enabled`), through a small HTTP call rather than an SDK. sentry-watch triages what arrives.
 - No em dashes in copy.
 

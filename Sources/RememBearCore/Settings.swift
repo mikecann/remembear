@@ -47,6 +47,14 @@ public final class Settings: @unchecked Sendable {
         set { defaults.set(newValue, forKey: "claudeConfigDir") }
     }
 
+    /// Other logins to fall back to when the main one is out of usage, in
+    /// order. Personal logins only: screen history must never go through a
+    /// work account.
+    public var claudeFallbackConfigDirs: [String] {
+        get { defaults.stringArray(forKey: "claudeFallbackConfigDirs") ?? [] }
+        set { defaults.set(newValue, forKey: "claudeFallbackConfigDirs") }
+    }
+
     public var pausedUntil: Date? {
         get { defaults.object(forKey: "pausedUntil") as? Date }
         set { defaults.set(newValue, forKey: "pausedUntil") }

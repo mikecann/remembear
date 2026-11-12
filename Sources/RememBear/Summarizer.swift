@@ -2,7 +2,8 @@ import Foundation
 import RememBearCore
 
 /// Writes the 10-minute and 6-hour summaries with `claude -p` on Mike's own
-/// subscription, and deletes raw events after 48 hours. Each pass works out
+/// subscription, and deletes raw events after 48 hours (a week if the window
+/// never got its summary). Each pass works out
 /// what's due from the files on disk, so a restart or a failed call is
 /// picked up on the next pass.
 final class Summarizer {
@@ -13,6 +14,7 @@ final class Summarizer {
     private var running = false
     private var attempts: [TimeWindow: Int] = [:]
     private var retryAfter: [TimeWindow: Date] = [:]
+    private var logins: ClaudeLogins
 
     /// For the menu: the newest summary's title and file, and the last error.
     private(set) var latest: (title: String, url: URL)?
@@ -21,6 +23,7 @@ final class Summarizer {
     init(settings: Settings, store: EventStore) {
         self.settings = settings
         self.store = store
+        logins = ClaudeLogins(main: settings.claudeConfigDir, fallbacks: settings.claudeFallbackConfigDirs)
     }
 
     func start() {
@@ -44,13 +47,13 @@ final class Summarizer {
     private func pass() {
         let now = Date()
         var segments = store.segments()
-        for old in Schedule.expired(segments, now: now) {
+        var summaries = summaryFiles()
+        for old in Schedule.expired(segments, summarized: Set(summaries.keys), now: now) {
             store.delete(old)
             segments.remove(old)
             Log.info("deleted raw events for \(old)")
         }
 
-        var summaries = summaryFiles()
         let due = Schedule.dueTenMinute(segments: segments, summarized: Set(summaries.keys), retryAfter: retryAfter, now: now)
         // A cap per pass keeps a long backlog from hogging the subscription
         // in one go; the next pass carries on.
@@ -98,7 +101,7 @@ final class Summarizer {
     private func write(_ window: TimeWindow, model: String, system: String, prompt: String, applications: [String], citations: [String], detail: String) -> URL? {
         let started = Date()
         do {
-            let reply = try Claude.run(settings: settings, model: model, system: system, prompt: prompt)
+            let reply = try runOnAnyLogin(model: model, system: system, prompt: prompt)
             let draft = try SummaryFile.parseReply(reply)
             let file = SummaryFile.render(draft, applications: applications, citations: citations)
             let url = Paths.summaries.appendingPathComponent(SummaryFileName.make(window))
@@ -126,6 +129,43 @@ final class Summarizer {
         }
     }
 
+    /// Tries each login with room left, moving on when one is out of usage,
+    /// rate limited or signed out. Any other error stops there: it isn't the
+    /// login's fault, and another login would fail the same way.
+    private func runOnAnyLogin(model: String, system: String, prompt: String) throws -> String {
+        logins.configure(main: settings.claudeConfigDir, fallbacks: settings.claudeFallbackConfigDirs)
+        var lastError: Error?
+        for login in logins.candidates(now: Date()) {
+            guard ClaudeLogins.isPersonalAccount(email: Self.accountEmail(login)) else {
+                logins.rest(login, now: Date())
+                Log.info("skipped login \(login ?? "~/.claude"): not a personal account, or it can't say which")
+                continue
+            }
+            do {
+                let reply = try Claude.run(settings: settings, configDir: login, model: model, system: system, prompt: prompt)
+                logins.succeeded(login)
+                if login != logins.order.first! { Log.info("used fallback login \(login ?? "~/.claude")") }
+                return reply
+            } catch {
+                guard ClaudeLogins.isLoginProblem("\(error)") else { throw error }
+                logins.rest(login, now: Date())
+                Log.info("login \(login ?? "~/.claude") can't be used for now: \(error)")
+                lastError = error
+            }
+        }
+        throw lastError ?? Claude.Failure(description: "every Claude login is resting after a usage limit or sign-in problem")
+    }
+
+    /// The account a login is signed in as, from its own .claude.json
+    /// (~/.claude.json for the default one).
+    static func accountEmail(_ login: String?) -> String? {
+        let path = login.map { "\($0)/.claude.json" } ?? NSHomeDirectory() + "/.claude.json"
+        guard let data = FileManager.default.contents(atPath: path),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let account = json["oauthAccount"] as? [String: Any] else { return nil }
+        return account["emailAddress"] as? String
+    }
+
     // MARK: Files
 
     /// Every summary on disk, by window. If a window somehow has two, the
@@ -148,8 +188,10 @@ final class Summarizer {
     /// Deletes summaries and raw events whose window overlaps the last
     /// `interval`. Agent Archive mirrors recent deletions, so its copies go too.
     func forget(last interval: TimeInterval) {
+        // The cutoff is taken now, not when the queue gets to it: a backlog
+        // of summaries ahead of it could otherwise shrink the hour.
+        let since = Date().addingTimeInterval(-interval)
         work.async { [self] in
-            let since = Date().addingTimeInterval(-interval)
             store.deleteAll(since: since)
             for (w, url) in summaryFiles() where w.end > since {
                 try? FileManager.default.removeItem(at: url)
@@ -174,7 +216,7 @@ enum Claude {
         let description: String
     }
 
-    static func run(settings: Settings, model: String, system: String, prompt: String, timeout: TimeInterval = 300) throws -> String {
+    static func run(settings: Settings, configDir: String?, model: String, system: String, prompt: String, timeout: TimeInterval = 300) throws -> String {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: settings.claudePath)
         p.arguments = ["-p", "--model", model, "--tools", "", "--strict-mcp-config", "--no-session-persistence",
@@ -183,7 +225,7 @@ enum Claude {
         let home = NSHomeDirectory()
         var env = ["HOME": home, "USER": NSUserName(), "LANG": "en_US.UTF-8",
                    "PATH": "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"]
-        if let dir = settings.claudeConfigDir { env["CLAUDE_CONFIG_DIR"] = dir }
+        if let configDir { env["CLAUDE_CONFIG_DIR"] = configDir }
         p.environment = env
         let input = Pipe(), output = Pipe(), errors = Pipe()
         p.standardInput = input
@@ -212,7 +254,14 @@ enum Claude {
             throw Failure(description: "claude exited \(p.terminationStatus) without JSON: \(tail.trimmingCharacters(in: .whitespacesAndNewlines))")
         }
         if (json["is_error"] as? Bool) == true {
-            throw Failure(description: "claude error: \((json["result"] as? String) ?? (json["subtype"] as? String) ?? "unknown")")
+            // Everything that might say why, so a signed-out or limited login
+            // is recognised and the next one tried. Stays in the local log;
+            // Sentry only ever gets the fixed problem.
+            var parts = [(json["result"] as? String) ?? (json["subtype"] as? String) ?? "unknown"]
+            parts += (json["errors"] as? [Any])?.map { "\($0)" } ?? []
+            let stderr = String(decoding: err.suffix(400), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !stderr.isEmpty { parts.append(stderr) }
+            throw Failure(description: "claude error: " + parts.joined(separator: " · "))
         }
         guard let result = json["result"] as? String, !result.isEmpty else {
             throw Failure(description: "claude returned no result")
