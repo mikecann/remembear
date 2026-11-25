@@ -49,4 +49,29 @@ final class ClaudeLoginsTests: XCTestCase {
         XCTAssertFalse(ClaudeLogins.isPersonalAccount(email: nil))
         XCTAssertFalse(ClaudeLogins.isPersonalAccount(email: ""))
     }
+
+    // 14 Nov 2026: Claude Code sign-ins now end after about 28 days, and the
+    // default login's "time limit" error didn't move summaries to the other
+    // logins, so none were written for 11 days and unsummarised days aged out.
+    func testASignInThatHasEndedIsALoginProblem() {
+        XCTAssertTrue(ClaudeLogins.isLoginProblem("claude error: Failed to authenticate: this login reached its time limit and cannot be renewed. Run `claude auth login` to sign in again, or use `claude setup-token` and set CLAUDE_CODE_OAUTH_TOKEN for unattended jobs"))
+        XCTAssertTrue(ClaudeLogins.isLoginProblem("claude error: Failed to authenticate. API Error: 401"))
+        XCTAssertTrue(ClaudeLogins.isLoginProblem("claude error: API Error: 401 OAuth token has been revoked"))
+        // A request that ran out of time isn't the login's fault.
+        XCTAssertFalse(ClaudeLogins.isLoginProblem("claude error: the request reached its time limit"))
+    }
+
+    // Threadbear keeps a login's year-long `claude setup-token` token in
+    // threadbear-token.json in the login's folder.
+    func testReadsAYearLongToken() {
+        XCTAssertEqual(ClaudeLogins.yearToken(Data(#"{"madeAt":"2026-11-17T23:38:54Z","token":"sk-ant-oat01-abc"}"#.utf8)), "sk-ant-oat01-abc")
+        XCTAssertNil(ClaudeLogins.yearToken(Data(#"{"madeAt":"2026-11-17T23:38:54Z"}"#.utf8)))
+        XCTAssertNil(ClaudeLogins.yearToken(Data(#"{"token":"  "}"#.utf8)))
+        // A token broken over lines can't go in a header, and the error that
+        // gives wouldn't move summaries to another login.
+        XCTAssertNil(ClaudeLogins.yearToken(Data(#"{"token":"sk-ant-oat01-abc\ndef"}"#.utf8)))
+        XCTAssertNil(ClaudeLogins.yearToken(Data(#"{"token":"sk-ant oat01"}"#.utf8)))
+        XCTAssertNil(ClaudeLogins.yearToken(Data("not json".utf8)))
+        XCTAssertNil(ClaudeLogins.yearToken(nil))
+    }
 }

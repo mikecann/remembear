@@ -45,13 +45,29 @@ public struct ClaudeLogins: Sendable {
     /// A failure that's about the login rather than the prompt or Claude as
     /// a whole, so another login may well work: out of usage ("You've hit
     /// your weekly limit · resets ...", "Claude AI usage limit reached|<epoch>"),
-    /// rate limited, or signed out. Overloaded and timeouts aren't: another
-    /// login wouldn't help.
+    /// rate limited, signed out, or a sign-in past its time limit ("Failed to
+    /// authenticate: this login reached its time limit", 14 Nov 2026).
+    /// Overloaded and timeouts aren't: another login wouldn't help.
     public static func isLoginProblem(_ message: String) -> Bool {
         let m = message.lowercased()
         let signals = ["usage limit", "rate limit", "rate_limit", "not logged in", "please run /login", "invalid api key",
-                       "authentication_error", "oauth token has expired", "credit balance is too low"]
+                       "authentication_error", "oauth token has expired", "credit balance is too low",
+                       "failed to authenticate", "this login reached its time limit", "has been revoked"]
         return (m.contains("hit your") && m.contains("limit")) || signals.contains { m.contains($0) }
+    }
+
+    /// The name of the file in a login's folder where Threadbear keeps its
+    /// year-long `claude setup-token` token. A Claude sign-in ends after
+    /// about 28 days and can't be renewed; the token lasts a year.
+    public static let yearTokenFile = "threadbear-token.json"
+
+    /// The token in a `yearTokenFile`, if it holds one.
+    public static func yearToken(_ data: Data?) -> String? {
+        guard let data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let token = (json["token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty,
+              token.allSatisfy({ $0.isASCII && !$0.isWhitespace && !($0.asciiValue.map { $0 < 0x20 || $0 == 0x7F } ?? true) })
+        else { return nil }
+        return token
     }
 
     /// Screen history must never go through a work account (Mike's Convex

@@ -226,6 +226,14 @@ enum Claude {
         var env = ["HOME": home, "USER": NSUserName(), "LANG": "en_US.UTF-8",
                    "PATH": "\(home)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"]
         if let configDir { env["CLAUDE_CONFIG_DIR"] = configDir }
+        // A year-long token outlasts the login's own sign-in. It can't say
+        // which account it's for, so like Threadbear this trusts the one in
+        // a login's folder to be that login's account.
+        let folder = configDir ?? "\(home)/.claude"
+        let file = URL(fileURLWithPath: folder).appendingPathComponent(ClaudeLogins.yearTokenFile)
+        if let token = ClaudeLogins.yearToken(FileManager.default.contents(atPath: file.path)) {
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+        }
         p.environment = env
         let input = Pipe(), output = Pipe(), errors = Pipe()
         p.standardInput = input
