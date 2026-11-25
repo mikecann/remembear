@@ -12,7 +12,7 @@ public enum Problem: String, CaseIterable, Sendable {
     public var message: String {
         switch self {
         case .readStuck: "A window read is stuck; recording windows without their text"
-        case .relaunched: "A window read stayed stuck, so RememBear relaunched itself"
+        case .relaunched: "Window reads stayed stuck or failing, so RememBear relaunched itself"
         case .relaunchFailed: "RememBear tried to relaunch and couldn't"
         case .notRecording: "No window recorded or skipped in 15 minutes of switching windows"
         case .summaryFailing: "A summary has failed three times"

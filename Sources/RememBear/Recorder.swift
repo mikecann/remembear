@@ -129,7 +129,11 @@ final class Recorder {
         refreshTrust()
         var reader = watchdog.check(uptime: ProcessInfo.processInfo.systemUptime, now: Date(), lastRelaunch: settings.lastWatchdogRelaunch)
         if reader == .relaunch {
-            Log.info("a window read has been stuck for over \(Int(watchdog.relaunchAfter / 60)) minutes; relaunching")
+            if watchdog.failing(uptime: ProcessInfo.processInfo.systemUptime) {
+                Log.info("window reads have failed for over \(Int(watchdog.failingFor / 60)) minutes; relaunching")
+            } else {
+                Log.info("a window read has been stuck for over \(Int(watchdog.relaunchAfter / 60)) minutes; relaunching")
+            }
             // Noted first, so a relaunch that doesn't take can't be retried
             // for an hour; this copy goes on recording without text meanwhile.
             settings.lastWatchdogRelaunch = Date()
@@ -201,9 +205,25 @@ final class Recorder {
             await MainActor.run {
                 // An overdue read is dropped: windows went on being recorded
                 // without text meanwhile, so lastKey has moved on.
-                guard watchdog.finish(token, uptime: ProcessInfo.processInfo.systemUptime) else {
+                let outcome: CaptureWatchdog.Outcome = switch read {
+                case nil, .unchanged: .notRead
+                case .failed: .failed
+                case .read: .ok
+                }
+                guard watchdog.finish(token, uptime: ProcessInfo.processInfo.systemUptime, outcome: outcome) else {
                     Log.info("a slow window read came back; dropped what it read")
                     loggedStuck = false
+                    return
+                }
+                // Reads keep failing (and a relaunch hasn't fixed it, or
+                // can't yet): the app, title and site still go in, as they
+                // do while a read is stuck. Reads go on being tried.
+                if outcome == .failed, changed, watchdog.failing(uptime: ProcessInfo.processInfo.systemUptime) {
+                    // Checked again, as a read is: the window may have gone
+                    // private or been excluded while it was being read.
+                    guard let again = allowedFront(), again.app.pid == front.app.pid, again.window.id == front.window.id,
+                          again.window.title == front.window.title else { suppressed += 1; return }
+                    recordWithoutText(again, key: key, at: now)
                     return
                 }
                 finish(front, key: key, changed: changed, read: read, at: now)
@@ -211,7 +231,7 @@ final class Recorder {
         }
     }
 
-    /// While a read is stuck: the app, title and site still say where Mike
+    /// While a read is stuck or reads keep failing: the app, title and site still say where Mike
     /// was. The window has passed `allowedFront`, and a title that looks
     /// like a key is left out as it would be with text.
     private func recordWithoutText(_ front: Front, key: String, at: Date) {
@@ -232,6 +252,8 @@ final class Recorder {
         guard let read else { return }
         let lines: [String], image: CGImage
         switch read {
+        case .failed:
+            return
         case .unchanged:
             settled()
             unchangedSkips += 1
@@ -418,9 +440,14 @@ enum ScreenReader {
         /// The window's text lines, its picture for the embedder (kept in
         /// memory only) and its fingerprint for next time.
         case read(lines: [String], image: CGImage, fingerprint: [UInt8])
+        /// Vision threw reading the text (`CaptureWatchdog` counts these).
+        case failed
     }
 
+    /// Nil if the window has gone or couldn't be captured: only a failed
+    /// text read says Vision itself is broken.
     static func read(windowID: CGWindowID, unlessSameAs previous: [UInt8]?) async -> Result? {
+        let image: CGImage
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
             guard let window = content.windows.first(where: { $0.windowID == windowID }) else { return nil }
@@ -433,7 +460,12 @@ enum ScreenReader {
             config.height = max(1, Int(size.height * scale * shrink))
             config.showsCursor = false
             config.ignoreShadowsSingleWindow = true
-            let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+            image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+        } catch {
+            Log.info("couldn't capture window \(windowID): \(error.localizedDescription)")
+            return nil
+        }
+        do {
             // Drained here rather than whenever the concurrency thread next
             // does: Vision and Core Graphics hand out autoreleased screen
             // buffers, and after a day 294 of them (4.2 GB reserved, though
@@ -445,7 +477,7 @@ enum ScreenReader {
             }
         } catch {
             Log.info("couldn't read window \(windowID): \(error.localizedDescription)")
-            return nil
+            return .failed
         }
     }
 
